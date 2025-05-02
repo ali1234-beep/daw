@@ -1,0 +1,328 @@
+import customtkinter as ctk
+import requests
+import random
+import threading
+import time
+from PIL import Image, ImageTk, ImageDraw, ImageFont
+import pygame
+import os
+
+pygame.mixer.init()
+
+ctk.set_appearance_mode("light")
+ctk.set_default_color_theme("blue")
+
+# Gradient colors for backgrounds
+BG_GRADIENT = ("#e0eafc", "#cfdef3", "#a1c4fd", "#c2e9fb")  # Main background
+CARD_GRADIENT = ("#f8fafc", "#e0eafc")  # Card background
+HUD_GRADIENT = ("#a1c4fd", "#c2e9fb")   # HUD/nav bar background
+
+CARD_COLOR = "#ffffff"
+ACCENT_COLOR = "#00f0ff"
+TEXT_COLOR = "#181c2f"
+BUTTON_BG = "#ffffff"
+BUTTON_TEXT = "#181c2f"
+BUTTON_ACTIVE = "#e0eafc"
+HUD_ACCENT = "#00f0ff"
+
+PROMPT_AUDIO = "prompt.wav"
+WAITING_AUDIO = "waiting.wav"
+ICON_IMAGE = "ai_icon.png"
+
+# Try to use cool fonts, fallback to Segoe UI if not available
+def get_font(name, size, weight="normal"):
+    try:
+        return (name, size, weight)
+    except:
+        return ("Segoe UI", size, weight)
+
+def fetch_trivia_fact(category):
+    category_map = {"History": 23, "Science": 17, "Math": 19}
+    cat_id = category_map.get(category, 9)
+    url = f"https://opentdb.com/api.php?amount=1&category={cat_id}&type=multiple"
+    try:
+        resp = requests.get(url, timeout=5)
+        data = resp.json()
+        if data["response_code"] == 0:
+            q = data["results"][0]
+            question = q["question"].replace("&quot;", "\"").replace("&#039;", "'")
+            answer = q["correct_answer"].replace("&quot;", "\"").replace("&#039;", "'")
+            return f"Q: {question}\n\nA: {answer}"
+    except Exception:
+        pass
+    return None
+
+def fetch_math_fact():
+    try:
+        resp = requests.get("http://numbersapi.com/random/math?json", timeout=5)
+        data = resp.json()
+        return f"Q: {data['text']}"
+    except Exception:
+        return "No math fact found. Try again!"
+
+def fetch_fact(category):
+    if category == "Math":
+        fact = fetch_trivia_fact("Math")
+        if not fact:
+            fact = fetch_math_fact()
+        return fact
+    else:
+        fact = fetch_trivia_fact(category)
+        if not fact:
+            return "No fact found. Try again!"
+        return fact
+
+def play_audio(filename, loop=False):
+    try:
+        pygame.mixer.music.load(filename)
+        pygame.mixer.music.play(-1 if loop else 0)
+    except Exception:
+        pass
+
+def stop_audio():
+    pygame.mixer.music.stop()
+
+# Gradient background frame
+class GradientBgFrame(ctk.CTkFrame):
+    def __init__(self, master, gradient_colors, *args, **kwargs):
+        super().__init__(master, fg_color="transparent", *args, **kwargs)
+        self.gradient_colors = gradient_colors
+        self.canvas = ctk.CTkCanvas(self, highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.bind("<Configure>", self._draw_gradient)
+
+    def _draw_gradient(self, event=None):
+        w, h = self.winfo_width(), self.winfo_height()
+        self.canvas.delete("all")
+        steps = h
+        for i in range(steps):
+            ratio = i / steps
+            color = self._interpolate_gradient(ratio)
+            self.canvas.create_line(0, i, w, i, fill=color)
+    def _interpolate_gradient(self, t):
+        stops = list(self.gradient_colors)
+        idx = int(t * (len(stops)-1))
+        t2 = (t * (len(stops)-1)) % 1
+        c1 = stops[idx]
+        c2 = stops[min(idx+1, len(stops)-1)]
+        def hex2rgb(h): return tuple(int(h[i:i+2],16) for i in (1,3,5))
+        def rgb2hex(r,g,b): return f"#{r:02x}{g:02x}{b:02x}"
+        r1,g1,b1 = hex2rgb(c1)
+        r2,g2,b2 = hex2rgb(c2)
+        r = int(r1 + (r2-r1)*t2)
+        g = int(g1 + (g2-g1)*t2)
+        b = int(b1 + (b2-b1)*t2)
+        return rgb2hex(r,g,b)
+
+class LoadingSpinner(ctk.CTkLabel):
+    def __init__(self, parent, size=40, color=ACCENT_COLOR, **kwargs):
+        super().__init__(parent, text="", **kwargs)
+        self.size = size
+        self.color = color
+        self.angle = 0
+        self.running = False
+
+    def start(self):
+        self.running = True
+        self._animate()
+
+    def stop(self):
+        self.running = False
+        self.configure(image="")
+
+    def _animate(self):
+        if not self.running:
+            return
+        img = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        draw.arc([5, 5, self.size-5, self.size-5], start=self.angle, end=self.angle+270, fill=self.color, width=6)
+        ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
+        self.configure(image=ctk_img)
+        self.image = ctk_img
+        self.angle = (self.angle + 20) % 360
+        self.after(50, self._animate)
+
+class StudyGuideApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("Study Guide AI")
+        self.geometry("500x800")
+        self.resizable(False, False)
+
+        # Main gradient background
+        self.bg = GradientBgFrame(self, BG_GRADIENT)
+        self.bg.pack(fill="both", expand=True)
+
+        # Centered card with shadow
+        self.card_bg = GradientBgFrame(self.bg.canvas, CARD_GRADIENT)
+        self.card_bg.place(relx=0.5, rely=0.45, anchor="center", relwidth=0.92, relheight=0.82)
+        self.card = ctk.CTkFrame(self.card_bg.canvas, fg_color=CARD_COLOR, corner_radius=32)
+        self.card.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.98, relheight=0.97)
+
+        # Themed image at the top
+        try:
+            img = Image.open(ICON_IMAGE).resize((80, 80))
+            self.icon_img = ctk.CTkImage(light_image=img, dark_image=img, size=(80, 80))
+            ctk.CTkLabel(self.card, image=self.icon_img, text="", bg_color="transparent").pack(pady=(18, 0))
+        except Exception:
+            pass
+
+        # Pages
+        self.pages = {}
+        self.nav_buttons = {}
+        for Page in (HomePage, CategoriesPage, RandomPage, SettingsPage, InfoPage):
+            page = Page(self.card, self)
+            self.pages[Page.__name__] = page
+            page.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.show_page("HomePage")
+
+        # Navigation bar (HUD) with gradient
+        self.hud_bg = GradientBgFrame(
+            self.bg.canvas, HUD_GRADIENT,
+            width=int(0.9 * 500), height=70
+        )
+        self.hud_bg.place(relx=0.5, rely=0.97, anchor="s")
+        self.hud = ctk.CTkFrame(self.hud_bg.canvas, fg_color="transparent", corner_radius=32, width=int(0.9 * 500), height=70)
+        self.hud.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.98, relheight=0.95)
+
+        nav_items = [
+            ("🏠 Home", "HomePage"),
+            ("📚 Categories", "CategoriesPage"),
+            ("🎲 Random", "RandomPage"),
+            ("⚙️ Settings", "SettingsPage"),
+            ("ℹ️ Info", "InfoPage"),
+        ]
+        for name, page in nav_items:
+            btn = ctk.CTkButton(
+                self.hud, text=name, fg_color=BUTTON_BG, text_color=BUTTON_TEXT,
+                corner_radius=18, width=90, hover_color=BUTTON_ACTIVE,
+                command=lambda p=page: self.show_page(p),
+                font=get_font("Montserrat", 15, "bold")
+            )
+            btn.pack(side="left", padx=8, pady=14)
+            self.nav_buttons[page] = btn
+
+        self.fullscreen = False
+
+    def show_page(self, page_name):
+        for page in self.pages.values():
+            page.lower()
+        self.pages[page_name].lift()
+        # Highlight active nav button
+        for name, btn in self.nav_buttons.items():
+            if name == page_name:
+                btn.configure(fg_color=ACCENT_COLOR, text_color="#fff")
+            else:
+                btn.configure(fg_color=BUTTON_BG, text_color=BUTTON_TEXT)
+
+    def toggle_fullscreen(self, value):
+        self.fullscreen = value
+        self.attributes("-fullscreen", self.fullscreen)
+
+class NeonLabel(ctk.CTkLabel):
+    def __init__(self, master, text, font=("Orbitron", 24, "bold"), **kwargs):
+        super().__init__(master, text="", **kwargs)
+        self._text = text
+        self._font = font
+        self._render_neon()
+
+    def _render_neon(self):
+        font_size = self._font[1]
+        font_path = "arial.ttf"
+        try:
+            font = ImageFont.truetype(font_path, font_size)
+        except:
+            font = ImageFont.load_default()
+        bbox = font.getbbox(self._text)
+        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        img = Image.new("RGBA", (w+8, h+8), (0,0,0,0))
+        draw = ImageDraw.Draw(img)
+        draw.text((4,4), self._text, font=font, fill="black")
+        draw.text((2,2), self._text, font=font, fill=ACCENT_COLOR)
+        ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
+        self.configure(image=ctk_img, text="")
+        self.image = ctk_img
+
+class HomePage(ctk.CTkFrame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, fg_color="transparent")
+        NeonLabel(self, text="Welcome to Study Guide AI", font=get_font("Orbitron", 32, "bold")).pack(pady=(40, 10))
+        NeonLabel(self, text="Get vibrant facts and trivia from History, Science, and Math.", font=get_font("Montserrat", 18)).pack(pady=10)
+        ctk.CTkLabel(self, text="Inspired by modern dashboard UIs.", font=get_font("Roboto Slab", 12), text_color="#888888").pack(side="bottom", pady=20)
+
+class CategoriesPage(ctk.CTkFrame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, fg_color="transparent")
+        NeonLabel(self, text="Categories", font=get_font("Orbitron", 26, "bold")).pack(pady=(30, 10))
+        self.category_var = ctk.StringVar(value="History")
+        ctk.CTkSegmentedButton(self, values=["History", "Science", "Math"], variable=self.category_var, fg_color=BUTTON_BG, selected_color=ACCENT_COLOR, text_color=BUTTON_TEXT, font=get_font("Montserrat", 14, "bold")).pack(pady=10)
+        self.fact_label = NeonLabel(self, text="Select a category and click 'Show Fact'.", font=get_font("Montserrat", 18))
+        self.fact_label.pack(pady=30, padx=20, fill="x")
+        self.spinner = LoadingSpinner(self, size=40)
+        self.spinner.pack(pady=5)
+        ctk.CTkButton(self, text="Show Fact", command=self.show_fact, fg_color=ACCENT_COLOR, text_color="#fff", corner_radius=20, font=get_font("Montserrat", 18, "bold"), hover_color=BUTTON_ACTIVE).pack(pady=10)
+
+    def show_fact(self):
+        category = self.category_var.get()
+        self.fact_label.configure(text="")
+        self.spinner.start()
+        play_audio(WAITING_AUDIO, loop=True)
+        threading.Thread(target=self._fetch_fact, args=(category,), daemon=True).start()
+
+    def _fetch_fact(self, category):
+        time.sleep(1.5)
+        fact = fetch_fact(category)
+        stop_audio()
+        play_audio(PROMPT_AUDIO)
+        self.spinner.stop()
+        self.fact_label._text = fact
+        self.fact_label._render_neon()
+
+class RandomPage(ctk.CTkFrame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, fg_color="transparent")
+        NeonLabel(self, text="Random Fact", font=get_font("Orbitron", 26, "bold")).pack(pady=(30, 10))
+        self.fact_label = NeonLabel(self, text="Click below for a random fact!", font=get_font("Montserrat", 18))
+        self.fact_label.pack(pady=30, padx=20, fill="x")
+        self.spinner = LoadingSpinner(self, size=40)
+        self.spinner.pack(pady=5)
+        ctk.CTkButton(self, text="Show Random Fact", command=self.show_random_fact, fg_color=ACCENT_COLOR, text_color="#fff", corner_radius=20, font=get_font("Montserrat", 18, "bold"), hover_color=BUTTON_ACTIVE).pack(pady=10)
+
+    def show_random_fact(self):
+        category = random.choice(["History", "Science", "Math"])
+        self.fact_label.configure(text="")
+        self.spinner.start()
+        play_audio(WAITING_AUDIO, loop=True)
+        threading.Thread(target=self._fetch_fact, args=(category,), daemon=True).start()
+
+    def _fetch_fact(self, category):
+        time.sleep(1.5)
+        fact = fetch_fact(category)
+        stop_audio()
+        play_audio(PROMPT_AUDIO)
+        self.spinner.stop()
+        self.fact_label._text = fact
+        self.fact_label._render_neon()
+
+class SettingsPage(ctk.CTkFrame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, fg_color="transparent")
+        NeonLabel(self, text="Settings", font=get_font("Orbitron", 26, "bold")).pack(pady=(30, 10))
+        self.fullscreen_var = ctk.BooleanVar(value=False)
+        ctk.CTkSwitch(self, text="Full Screen Mode", variable=self.fullscreen_var, command=self.toggle_fullscreen, fg_color=ACCENT_COLOR, font=get_font("Montserrat", 16)).pack(pady=20)
+        ctk.CTkLabel(self, text="(More settings coming soon!)", font=get_font("Roboto Slab", 16), text_color=ACCENT_COLOR).pack(pady=30)
+        self.controller = controller
+
+    def toggle_fullscreen(self):
+        self.controller.toggle_fullscreen(self.fullscreen_var.get())
+
+class InfoPage(ctk.CTkFrame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, fg_color="transparent")
+        NeonLabel(self, text="About", font=get_font("Orbitron", 26, "bold")).pack(pady=(30, 10))
+        NeonLabel(self, text="Study Guide AI\nCreated for ICS3U Assignment\nUses Open Trivia DB and Numbers API for facts.", font=get_font("Montserrat", 18)).pack(pady=30)
+        ctk.CTkLabel(self, text="UI inspired by modern dashboards.", font=get_font("Roboto Slab", 12), text_color="#888888").pack(side="bottom", pady=20)
+
+if __name__ == "__main__":
+    app = StudyGuideApp()
+    app.mainloop()
