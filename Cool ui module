@@ -1,0 +1,88 @@
+import tkinter as tk
+from tkinter import font
+from PIL import Image, ImageTk
+
+# --- Colors and settings ---
+BG_COLOR = "#1D223A"
+ENTRY_COLOR = "#1D223A"
+TEXT_COLOR = "#B8C2E0"
+LABEL_COLOR = "#FFFFFF"
+BUTTON_COLOR = "#7A5CFA"
+BORDER_RADIUS = 20
+WIDTH = 300
+HEIGHT = 270
+
+root = tk.Tk()
+root.title("Login Widget")
+root.geometry("400x400")
+root.configure(bg="#121321")
+
+# --- Custom Fonts ---
+title_font = ("Segoe UI", 13, "bold")
+entry_font = ("Segoe UI", 10)
+link_font = ("Segoe UI", 9, "underline")
+
+# --- Canvas with rounded corners ---
+canvas = tk.Canvas(root, width=WIDTH, height=HEIGHT, bg="#121321", highlightthickness=0)
+canvas.place(x=50, y=40)
+
+def round_rectangle(x1, y1, x2, y2, radius=25, **kwargs):
+    points = [
+        x1 + radius, y1,
+        x1 + radius, y1,
+        x2 - radius, y1,
+        x2 - radius, y1,
+        x2, y1,
+        x2, y1 + radius,
+        x2, y1 + radius,
+        x2, y2 - radius,
+        x2, y2 - radius,
+        x2, y2,
+        x2 - radius, y2,
+        x2 - radius, y2,
+        x1 + radius, y2,
+        x1 + radius, y2,
+        x1, y2,
+        x1, y2 - radius,
+        x1, y2 - radius,
+        x1, y1 + radius,
+        x1, y1 + radius,
+        x1, y1,
+    ]
+    return canvas.create_polygon(points, **kwargs, smooth=True)
+
+round_rectangle(0, 0, WIDTH, HEIGHT, radius=BORDER_RADIUS, fill=BG_COLOR)
+
+# --- Login Title ---
+canvas.create_text(25, 25, text="Login", anchor="w", fill=LABEL_COLOR, font=title_font)
+
+# --- Email Entry ---
+email_entry = tk.Entry(root, bd=0, bg=ENTRY_COLOR, fg=TEXT_COLOR, font=entry_font, insertbackground=TEXT_COLOR)
+email_entry.insert(0, "Johnkohl.mail.com")
+email_entry.place(x=80, y=85, width=180, height=25)
+
+# Optional mail icon (placeholder with emoji or use PIL to load icon)
+canvas.create_text(260, 95, text="✉", fill=TEXT_COLOR, font=("Segoe UI", 10))
+
+canvas.create_line(70, 115, 230, 115, fill="#2C334D")
+
+# --- Password Entry ---
+password_entry = tk.Entry(root, bd=0, bg=ENTRY_COLOR, fg=TEXT_COLOR, font=entry_font, show="•", insertbackground=TEXT_COLOR)
+password_entry.insert(0, "••••••••")
+password_entry.place(x=80, y=135, width=180, height=25)
+
+canvas.create_text(260, 145, text="👁", fill=TEXT_COLOR, font=("Segoe UI", 10))
+canvas.create_line(70, 165, 230, 165, fill="#2C334D")
+
+# --- Forgot Password ---
+forgot_label = tk.Label(root, text="Forget Password?", fg=TEXT_COLOR, bg=BG_COLOR, font=link_font, cursor="hand2")
+forgot_label.place(x=120, y=175)
+
+# --- Sign Up Button ---
+signup_btn = tk.Button(root, text="Sign Up", bg=BUTTON_COLOR, fg="white", font=entry_font,
+                       activebackground=BUTTON_COLOR, bd=0, relief="flat")
+signup_btn.place(x=120, y=210, width=100, height=35)
+
+# Rounded button workaround using canvas (optional enhancement)
+
+root.mainloop()
