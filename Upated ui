@@ -538,17 +538,36 @@ class FactFinderApp(ctk.CTk):
             )
             retry_btn.pack(pady=(10, 40))
 
-    def add_to_favorites(self, fact_text):
+    def add_to_favorites(self, fact_data):
+        fact_text = fact_data["fact"]  # Extract the fact text from the dictionary
         if fact_text not in self.favorite_facts:
             self.favorite_facts.add(fact_text)
-            favorite_label = ctk.CTkLabel(
-                self.favorites_frame,
-                text=fact_text,
-                font=("Roboto", 12),
-                text_color=WHITE,
+            
+            favorite_frame = ctk.CTkFrame(self.favorites_frame, fg_color=CARD_BG)
+            favorite_frame.pack(pady=5, padx=5, fill="x")
+            
+            fav_text = ctk.CTkLabel(
+                favorite_frame,
+                text=fact_text[:50] + "...",  # Show truncated version
+                font=("Roboto", 10),
+                text_color=TEXT_WHITE,
                 wraplength=200
             )
-            favorite_label.pack(pady=5, padx=5)
+            fav_text.pack(pady=5, padx=5, side="left", fill="x", expand=True)
+            
+            remove_btn = ctk.CTkButton(
+                favorite_frame,
+                text="❌",
+                width=20,
+                fg_color="transparent",
+                hover_color=HIGHLIGHT_COLOR,
+                command=lambda: self.remove_favorite(favorite_frame, fact_text)
+            )
+            remove_btn.pack(side="right", padx=5)
+
+    def remove_favorite(self, frame, fact_text):
+        self.favorite_facts.remove(fact_text)
+        frame.destroy()
 
     def toggle_fullscreen(self):
         self.is_fullscreen = not self.is_fullscreen
