@@ -1,0 +1,96 @@
+import requests
+import random
+from datetime import datetime
+
+class FactAPI:
+    def __init__(self):
+        # Free APIs that don't require keys
+        self.number_api = "http://numbersapi.com"
+        
+        # Fallback facts database
+        self.fallback_facts = {
+            "History": [
+                "The Great Wall of China took over 2000 years to build",
+                "The first Olympic Games were held in ancient Greece in 776 BC",
+                "The printing press was invented by Johannes Gutenberg around 1440",
+                "The Rosetta Stone was discovered in 1799",
+                "The first successful powered flight was achieved by the Wright brothers in 1903"
+            ],
+            "Mathematics": [
+                "Zero is the only number that cannot be represented by Roman numerals",
+                "The word 'hundred' comes from the Old Norse word 'hundrath'",
+                "The equals sign (=) was invented by Robert Recorde in 1557",
+                "A googol is the number 1 followed by 100 zeros",
+                "Pi (π) has been calculated to over 31.4 trillion digits"
+            ],
+            "Science": [
+                "Light travels at approximately 299,792 kilometers per second",
+                "A honeybee has to visit about 2 million flowers to make one pound of honey",
+                "The human body contains enough carbon to make around 900 pencils",
+                "A day on Venus is longer than its year",
+                "Bananas are berries, but strawberries aren't"
+            ],
+            "Countries": {
+                "USA": [
+                    "The Liberty Bell cracked the first time it was rung",
+                    "Alaska was purchased from Russia for $7.2 million in 1867",
+                    "The first American woman in space was Sally Ride in 1983"
+                ],
+                "UK": [
+                    "The Big Ben clock tower was completed in 1859",
+                    "The London Underground opened in 1863",
+                    "Tea became popular in Britain in the 1660s"
+                ],
+                "Canada": [
+                    "Canada has more lakes than the rest of the world combined",
+                    "The longest coastline in the world belongs to Canada",
+                    "Basketball was invented by Canadian James Naismith"
+                ],
+                "Australia": [
+                    "Australia is the only continent that is also a country",
+                    "The Great Barrier Reef is the largest living structure on Earth",
+                    "Kangaroos and emus cannot walk backwards"
+                ],
+                "Germany": [
+                    "The first printed book was produced in Germany in 1455",
+                    "The German language has over 35 dialects",
+                    "The first magazine was published in Germany in 1663"
+                ]
+            }
+        }
+
+    def get_math_fact(self):
+        try:
+            response = requests.get(f"{self.number_api}/random/math", timeout=5)
+            if response.status_code == 200:
+                return {
+                    "fact": response.text,
+                    "source": "Numbers API"
+                }
+        except:
+            pass
+        
+        # Fallback to local database
+        return {
+            "fact": random.choice(self.fallback_facts["Mathematics"]),
+            "source": "Local Database"
+        }
+
+    def get_history_fact(self, country=None):
+        if country:
+            if country in self.fallback_facts["Countries"]:
+                return {
+                    "fact": random.choice(self.fallback_facts["Countries"][country]),
+                    "source": f"Local Database - {country}"
+                }
+        
+        return {
+            "fact": random.choice(self.fallback_facts["History"]),
+            "source": "Local Database"
+        }
+
+    def get_trivia_fact(self, category):
+        return {
+            "fact": random.choice(self.fallback_facts[category]),
+            "source": "Local Database"
+        }
