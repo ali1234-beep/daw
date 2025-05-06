@@ -1,328 +1,598 @@
 import customtkinter as ctk
+import json
+import sqlite3
 import requests
-import random
-import threading
-import time
-from PIL import Image, ImageTk, ImageDraw, ImageFont
-import pygame
+from pathlib import Path
 import os
+from PIL import Image, ImageTk
+from database.db_handler import DatabaseHandler
+from utils.api_handler import FactAPI
+import random
 
-pygame.mixer.init()
+# Theme Colors
+DARK_BLUE = "#1B2838"
+LIGHT_BLUE = "#66C0F4"
+ACCENT_BLUE = "#1E3F66"
+WHITE = "#FFFFFF"
+GRAY = "#707070"
+GRADIENT_DARK = "#1a237e"
+GRADIENT_LIGHT = "#4a148c"
+BUTTON_ACTIVE = "#3498db"
+HIGHLIGHT_COLOR = "#FF6B6B"  # Coral color for highlights
+SUCCESS_GREEN = "#2ecc71"
+WARNING_YELLOW = "#f1c40f"
+GRADIENT_START = "#1a237e"
+GRADIENT_END = "#4a148c"
 
-ctk.set_appearance_mode("light")
-ctk.set_default_color_theme("blue")
+# Update the color scheme
+DARK_BG = "#0A1929"  # Darker blue background
+CARD_BG = "#132F4C"  # Lighter blue for cards
+ACCENT_PURPLE = "#9C27B0"  # Purple accent
+ACCENT_ORANGE = "#FF9800"  # Orange accent
+TEXT_WHITE = "#FFFFFF"
+TEXT_GRAY = "#B2BAC2"
+BUTTON_HOVER = "#6B57FF"
 
-# Gradient colors for backgrounds
-BG_GRADIENT = ("#e0eafc", "#cfdef3", "#a1c4fd", "#c2e9fb")  # Main background
-CARD_GRADIENT = ("#f8fafc", "#e0eafc")  # Card background
-HUD_GRADIENT = ("#a1c4fd", "#c2e9fb")   # HUD/nav bar background
+# Update button style configuration
+button_style = {
+    "corner_radius": 12,
+    "border_width": 0,
+    "fg_color": ACCENT_PURPLE,
+    "hover_color": BUTTON_HOVER,
+    "font": ("Roboto", 14, "bold"),
+    "height": 40
+}
 
-CARD_COLOR = "#ffffff"
-ACCENT_COLOR = "#00f0ff"
-TEXT_COLOR = "#181c2f"
-BUTTON_BG = "#ffffff"
-BUTTON_TEXT = "#181c2f"
-BUTTON_ACTIVE = "#e0eafc"
-HUD_ACCENT = "#00f0ff"
+# Update card style configuration
+card_style = {
+    "corner_radius": 15,
+    "fg_color": CARD_BG,
+    "border_width": 1,
+    "border_color": "#1E4976"
+}
 
-PROMPT_AUDIO = "prompt.wav"
-WAITING_AUDIO = "waiting.wav"
-ICON_IMAGE = "ai_icon.png"
-
-# Try to use cool fonts, fallback to Segoe UI if not available
-def get_font(name, size, weight="normal"):
-    try:
-        return (name, size, weight)
-    except:
-        return ("Segoe UI", size, weight)
-
-def fetch_trivia_fact(category):
-    category_map = {"History": 23, "Science": 17, "Math": 19}
-    cat_id = category_map.get(category, 9)
-    url = f"https://opentdb.com/api.php?amount=1&category={cat_id}&type=multiple"
-    try:
-        resp = requests.get(url, timeout=5)
-        data = resp.json()
-        if data["response_code"] == 0:
-            q = data["results"][0]
-            question = q["question"].replace("&quot;", "\"").replace("&#039;", "'")
-            answer = q["correct_answer"].replace("&quot;", "\"").replace("&#039;", "'")
-            return f"Q: {question}\n\nA: {answer}"
-    except Exception:
-        pass
-    return None
-
-def fetch_math_fact():
-    try:
-        resp = requests.get("http://numbersapi.com/random/math?json", timeout=5)
-        data = resp.json()
-        return f"Q: {data['text']}"
-    except Exception:
-        return "No math fact found. Try again!"
-
-def fetch_fact(category):
-    if category == "Math":
-        fact = fetch_trivia_fact("Math")
-        if not fact:
-            fact = fetch_math_fact()
-        return fact
-    else:
-        fact = fetch_trivia_fact(category)
-        if not fact:
-            return "No fact found. Try again!"
-        return fact
-
-def play_audio(filename, loop=False):
-    try:
-        pygame.mixer.music.load(filename)
-        pygame.mixer.music.play(-1 if loop else 0)
-    except Exception:
-        pass
-
-def stop_audio():
-    pygame.mixer.music.stop()
-
-# Gradient background frame
-class GradientBgFrame(ctk.CTkFrame):
-    def __init__(self, master, gradient_colors, *args, **kwargs):
-        super().__init__(master, fg_color="transparent", *args, **kwargs)
-        self.gradient_colors = gradient_colors
-        self.canvas = ctk.CTkCanvas(self, highlightthickness=0)
-        self.canvas.pack(fill="both", expand=True)
-        self.bind("<Configure>", self._draw_gradient)
-
-    def _draw_gradient(self, event=None):
-        w, h = self.winfo_width(), self.winfo_height()
-        self.canvas.delete("all")
-        steps = h
-        for i in range(steps):
-            ratio = i / steps
-            color = self._interpolate_gradient(ratio)
-            self.canvas.create_line(0, i, w, i, fill=color)
-    def _interpolate_gradient(self, t):
-        stops = list(self.gradient_colors)
-        idx = int(t * (len(stops)-1))
-        t2 = (t * (len(stops)-1)) % 1
-        c1 = stops[idx]
-        c2 = stops[min(idx+1, len(stops)-1)]
-        def hex2rgb(h): return tuple(int(h[i:i+2],16) for i in (1,3,5))
-        def rgb2hex(r,g,b): return f"#{r:02x}{g:02x}{b:02x}"
-        r1,g1,b1 = hex2rgb(c1)
-        r2,g2,b2 = hex2rgb(c2)
-        r = int(r1 + (r2-r1)*t2)
-        g = int(g1 + (g2-g1)*t2)
-        b = int(b1 + (b2-b1)*t2)
-        return rgb2hex(r,g,b)
-
-class LoadingSpinner(ctk.CTkLabel):
-    def __init__(self, parent, size=40, color=ACCENT_COLOR, **kwargs):
-        super().__init__(parent, text="", **kwargs)
-        self.size = size
-        self.color = color
-        self.angle = 0
-        self.running = False
-
-    def start(self):
-        self.running = True
-        self._animate()
-
-    def stop(self):
-        self.running = False
-        self.configure(image="")
-
-    def _animate(self):
-        if not self.running:
-            return
-        img = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        draw.arc([5, 5, self.size-5, self.size-5], start=self.angle, end=self.angle+270, fill=self.color, width=6)
-        ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
-        self.configure(image=ctk_img)
-        self.image = ctk_img
-        self.angle = (self.angle + 20) % 360
-        self.after(50, self._animate)
-
-class StudyGuideApp(ctk.CTk):
+class FactFinderApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Study Guide AI")
-        self.geometry("500x800")
-        self.resizable(False, False)
+        
+        # Window setup
+        self.title("Fact Finder Assistant")
+        self.geometry("1200x800")
+        self.configure(fg_color=DARK_BLUE)
+        
+        # State variables
+        self.is_fullscreen = False
+        self.current_view = None
+        self.facts_viewed = 0  # Add this line
+        self.favorite_facts = set()  # Store unique facts
+        
+        # Configure grid
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        
+        # Create frames
+        self.create_sidebar()
+        self.create_main_content()
+        self.create_right_panel()
+        
+        # Load settings
+        self.load_settings()
+        
+        # Show home by default
+        self.show_home()
+        
+        # Bind keyboard shortcuts
+        self.bind("<F11>", lambda event: self.toggle_fullscreen())
+        self.bind("<Escape>", lambda event: self.exit_fullscreen())
 
-        # Main gradient background
-        self.bg = GradientBgFrame(self, BG_GRADIENT)
-        self.bg.pack(fill="both", expand=True)
+        self.db = DatabaseHandler()
+        self.api = FactAPI()
 
-        # Centered card with shadow
-        self.card_bg = GradientBgFrame(self.bg.canvas, CARD_GRADIENT)
-        self.card_bg.place(relx=0.5, rely=0.45, anchor="center", relwidth=0.92, relheight=0.82)
-        self.card = ctk.CTkFrame(self.card_bg.canvas, fg_color=CARD_COLOR, corner_radius=32)
-        self.card.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.98, relheight=0.97)
-
-        # Themed image at the top
-        try:
-            img = Image.open(ICON_IMAGE).resize((80, 80))
-            self.icon_img = ctk.CTkImage(light_image=img, dark_image=img, size=(80, 80))
-            ctk.CTkLabel(self.card, image=self.icon_img, text="", bg_color="transparent").pack(pady=(18, 0))
-        except Exception:
-            pass
-
-        # Pages
-        self.pages = {}
-        self.nav_buttons = {}
-        for Page in (HomePage, CategoriesPage, RandomPage, SettingsPage, InfoPage):
-            page = Page(self.card, self)
-            self.pages[Page.__name__] = page
-            page.place(relx=0, rely=0, relwidth=1, relheight=1)
-        self.show_page("HomePage")
-
-        # Navigation bar (HUD) with gradient
-        self.hud_bg = GradientBgFrame(
-            self.bg.canvas, HUD_GRADIENT,
-            width=int(0.9 * 500), height=70
+    def create_sidebar(self):
+        self.sidebar = ctk.CTkFrame(self, fg_color=DARK_BG, width=250, corner_radius=0)
+        self.sidebar.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+        self.sidebar.grid_propagate(False)
+        
+        # App logo/title with new styling
+        self.logo_label = ctk.CTkLabel(
+            self.sidebar, 
+            text="FACT FINDER",
+            font=("Roboto", 24, "bold"),
+            text_color=TEXT_WHITE
         )
-        self.hud_bg.place(relx=0.5, rely=0.97, anchor="s")
-        self.hud = ctk.CTkFrame(self.hud_bg.canvas, fg_color="transparent", corner_radius=32, width=int(0.9 * 500), height=70)
-        self.hud.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.98, relheight=0.95)
-
-        nav_items = [
-            ("🏠 Home", "HomePage"),
-            ("📚 Categories", "CategoriesPage"),
-            ("🎲 Random", "RandomPage"),
-            ("⚙️ Settings", "SettingsPage"),
-            ("ℹ️ Info", "InfoPage"),
+        self.logo_label.pack(pady=30, padx=20)
+        
+        buttons = [
+            ("🏠  Home", self.show_home),
+            ("🎲  Facts", self.show_facts),
+            ("📊  Statistics", self.show_stats),
+            ("⚙️  Settings", self.show_settings)
         ]
-        for name, page in nav_items:
+        
+        # Create a modified button style for sidebar buttons
+        sidebar_button_style = button_style.copy()
+        sidebar_button_style.update({
+            "fg_color": "transparent",
+            "text_color": TEXT_WHITE,
+            "anchor": "w",
+            "hover_color": CARD_BG
+        })
+        
+        for text, command in buttons:
             btn = ctk.CTkButton(
-                self.hud, text=name, fg_color=BUTTON_BG, text_color=BUTTON_TEXT,
-                corner_radius=18, width=90, hover_color=BUTTON_ACTIVE,
-                command=lambda p=page: self.show_page(p),
-                font=get_font("Montserrat", 15, "bold")
+                self.sidebar,
+                text=text,
+                command=command,
+                **sidebar_button_style
             )
-            btn.pack(side="left", padx=8, pady=14)
-            self.nav_buttons[page] = btn
+            btn.pack(pady=5, padx=20, fill="x")
 
-        self.fullscreen = False
+    def create_main_content(self):
+        # Main content area
+        self.main_frame = ctk.CTkFrame(self, fg_color=DARK_BLUE, corner_radius=0)
+        self.main_frame.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
+        
+        # Fact display area
+        self.fact_frame = ctk.CTkFrame(
+            self.main_frame,
+            fg_color=ACCENT_BLUE,
+            corner_radius=10
+        )
+        self.fact_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Fact text
+        self.fact_label = ctk.CTkLabel(
+            self.fact_frame,
+            text="Select a country to get interesting facts!",
+            font=("Roboto", 16),
+            text_color=WHITE,
+            wraplength=500
+        )
+        self.fact_label.pack(pady=20, padx=20)
 
-    def show_page(self, page_name):
-        for page in self.pages.values():
-            page.lower()
-        self.pages[page_name].lift()
-        # Highlight active nav button
-        for name, btn in self.nav_buttons.items():
-            if name == page_name:
-                btn.configure(fg_color=ACCENT_COLOR, text_color="#fff")
-            else:
-                btn.configure(fg_color=BUTTON_BG, text_color=BUTTON_TEXT)
+    def create_right_panel(self):
+        # Right panel for additional controls
+        self.right_panel = ctk.CTkFrame(self, fg_color=ACCENT_BLUE, width=250, corner_radius=0)
+        self.right_panel.grid(row=0, column=2, sticky="nsew", padx=0, pady=0)
+        self.right_panel.grid_propagate(False)
+        
+        # Country selection
+        self.country_label = ctk.CTkLabel(
+            self.right_panel,
+            text="Select Country:",
+            font=("Roboto", 14, "bold"),
+            text_color=WHITE
+        )
+        self.country_label.pack(pady=(20,5), padx=10)
+        
+        self.country_var = ctk.StringVar(value="Select a country")
+        self.country_dropdown = ctk.CTkOptionMenu(
+            self.right_panel,
+            values=["USA", "UK", "Canada", "Australia", "Germany"],
+            variable=self.country_var,
+            command=self.on_country_select
+        )
+        self.country_dropdown.pack(pady=5, padx=10)
+        
+        # Fact type selection
+        self.type_label = ctk.CTkLabel(
+            self.right_panel,
+            text="Fact Type:",
+            font=("Roboto", 14, "bold"),
+            text_color=WHITE
+        )
+        self.type_label.pack(pady=(20,5), padx=10)
+        
+        self.fact_types = ["History", "Mathematics", "Science", "Culture"]
+        for fact_type in self.fact_types:
+            cb = ctk.CTkCheckBox(
+                self.right_panel,
+                text=fact_type,
+                text_color=WHITE,
+                fg_color=LIGHT_BLUE
+            )
+            cb.pack(pady=5, padx=10)
 
-    def toggle_fullscreen(self, value):
-        self.fullscreen = value
-        self.attributes("-fullscreen", self.fullscreen)
+        # Add a search box
+        self.search_frame = ctk.CTkFrame(self.right_panel, fg_color="transparent")
+        self.search_frame.pack(pady=10, padx=10, fill="x")
+        
+        self.search_entry = ctk.CTkEntry(
+            self.search_frame,
+            placeholder_text="🔍 Search facts...",
+            height=35,
+            font=("Roboto", 12)
+        )
+        self.search_entry.pack(fill="x", pady=5)
+        
+        # Add favorite facts section
+        self.favorites_label = ctk.CTkLabel(
+            self.right_panel,
+            text="⭐ Favorite Facts",
+            font=("Roboto", 14, "bold"),
+            text_color=WHITE
+        )
+        self.favorites_label.pack(pady=(20,5), padx=10)
+        
+        self.favorites_frame = ctk.CTkFrame(self.right_panel, fg_color=DARK_BLUE)
+        self.favorites_frame.pack(pady=5, padx=10, fill="both", expand=True)
+        
+        # Add fact counter
+        self.counter_frame = ctk.CTkFrame(self.right_panel, fg_color=GRADIENT_START)
+        self.counter_frame.pack(pady=10, padx=10, fill="x", side="bottom")
+        
+        self.fact_counter = ctk.CTkLabel(
+            self.counter_frame,
+            text="Facts viewed: 0",
+            font=("Roboto", 12),
+            text_color=WHITE
+        )
+        self.fact_counter.pack(pady=5)
 
-class NeonLabel(ctk.CTkLabel):
-    def __init__(self, master, text, font=("Orbitron", 24, "bold"), **kwargs):
-        super().__init__(master, text="", **kwargs)
-        self._text = text
-        self._font = font
-        self._render_neon()
+    def load_settings(self):
+        # Load user settings from JSON file
+        settings_file = Path("settings.json")
+        if (settings_file.exists()):
+            with open(settings_file, "r") as f:
+                self.settings = json.load(f)
+        else:
+            self.settings = {
+                "theme": "dark",
+                "language": "en",
+                "last_country": None
+            }
+    
+    def show_home(self):
+        self.clear_main_frame()
+        self.current_view = "home"
+        
+        welcome_label = ctk.CTkLabel(
+            self.fact_frame,
+            text="Welcome to Fact Finder!",
+            font=("Roboto", 24, "bold"),
+            text_color=WHITE
+        )
+        welcome_label.pack(pady=(50, 20))
+        
+        info_text = "Select a country from the right panel to discover interesting facts.\n\n" \
+                   "You can filter facts by category using the checkboxes."
+        
+        info_label = ctk.CTkLabel(
+            self.fact_frame,
+            text=info_text,
+            font=("Roboto", 16),
+            text_color=WHITE,
+            wraplength=500
+        )
+        info_label.pack(pady=20)
 
-    def _render_neon(self):
-        font_size = self._font[1]
-        font_path = "arial.ttf"
+    def show_facts(self):
+        self.clear_main_frame()
+        self.current_view = "facts"
+        
+        # Create a gradient-style header
+        header_frame = ctk.CTkFrame(self.fact_frame, fg_color="transparent")
+        header_frame.pack(fill="x", padx=20, pady=(20, 30))
+        
+        header_label = ctk.CTkLabel(
+            header_frame,
+            text="✨ Discover Amazing Facts",
+            font=("Roboto", 28, "bold"),
+            text_color=WHITE
+        )
+        header_label.pack(side="left")
+        
+        # Create a container for the fact categories
+        categories_frame = ctk.CTkFrame(self.fact_frame, fg_color="transparent")
+        categories_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        # Define fact categories with icons and descriptions
+        categories = {
+            "🌍 Countries": "Get facts about specific countries",
+            "🏺 History": "Historical events and moments",
+            "🔢 Mathematics": "Numbers and mathematical concepts",
+            "🧬 Science": "Scientific discoveries and phenomena",
+            "🎲 Random": "Random interesting facts"
+        }
+        
+        # Create frame style for categories without duplicating properties
+        category_frame_style = {
+            "fg_color": CARD_BG,
+            "border_width": card_style["border_width"],
+            "border_color": card_style["border_color"],
+            "corner_radius": 10
+        }
+        
+        for category, description in categories.items():
+            # Create category frame with the correct style
+            category_frame = ctk.CTkFrame(
+                categories_frame,
+                **category_frame_style
+            )
+            category_frame.pack(fill="x", pady=10, padx=20)
+            
+            # Create left side container for icon and category
+            left_container = ctk.CTkFrame(category_frame, fg_color="transparent")
+            left_container.pack(side="left", padx=20, pady=15, fill="x", expand=True)
+            
+            category_label = ctk.CTkLabel(
+                left_container,
+                text=category,
+                font=("Roboto", 20, "bold"),
+                text_color=TEXT_WHITE
+            )
+            category_label.pack(side="left")
+            
+            description_label = ctk.CTkLabel(
+                left_container,
+                text=description,
+                font=("Roboto", 14),
+                text_color=TEXT_GRAY,
+                wraplength=400
+            )
+            description_label.pack(side="left", padx=(20, 0))
+            
+            # Create generate button
+            generate_btn = ctk.CTkButton(
+                category_frame,
+                text="Generate",
+                command=lambda cat=category.split()[1]: self.generate_fact(cat),
+                width=120,
+                **button_style
+            )
+            generate_btn.pack(side="right", padx=20)
+
+    def show_stats(self):
+        self.clear_main_frame()
+        self.current_view = "stats"
+        
+        stats_label = ctk.CTkLabel(
+            self.fact_frame,
+            text="Statistics",
+            font=("Roboto", 24, "bold"),
+            text_color=WHITE
+        )
+        stats_label.pack(pady=(50, 20))
+        
+        stats_text = "Here you can see your statistics.\n\n" \
+                     "Facts viewed: {}\n\n" \
+                     "Favorite facts: {}".format(self.facts_viewed, len(self.favorite_facts))
+        
+        stats_info_label = ctk.CTkLabel(
+            self.fact_frame,
+            text=stats_text,
+            font=("Roboto", 16),
+            text_color=WHITE,
+            wraplength=500
+        )
+        stats_info_label.pack(pady=20)
+
+    def show_settings(self):
+        self.clear_main_frame()
+        self.current_view = "settings"
+        
+        settings_label = ctk.CTkLabel(
+            self.fact_frame,
+            text="Settings",
+            font=("Roboto", 24, "bold"),
+            text_color=WHITE
+        )
+        settings_label.pack(pady=(50, 20))
+        
+        theme_label = ctk.CTkLabel(
+            self.fact_frame,
+            text="Theme:",
+            font=("Roboto", 16),
+            text_color=WHITE
+        )
+        theme_label.pack(pady=(20, 5))
+        
+        self.theme_var = ctk.StringVar(value=self.settings.get("theme", "dark"))
+        theme_options = ["dark", "light"]
+        self.theme_dropdown = ctk.CTkOptionMenu(
+            self.fact_frame,
+            values=theme_options,
+            variable=self.theme_var,
+            command=self.on_theme_change
+        )
+        self.theme_dropdown.pack(pady=5)
+        
+        language_label = ctk.CTkLabel(
+            self.fact_frame,
+            text="Language:",
+            font=("Roboto", 16),
+            text_color=WHITE
+        )
+        language_label.pack(pady=(20, 5))
+        
+        self.language_var = ctk.StringVar(value=self.settings.get("language", "en"))
+        language_options = ["en", "es", "fr", "de"]
+        self.language_dropdown = ctk.CTkOptionMenu(
+            self.fact_frame,
+            values=language_options,
+            variable=self.language_var,
+            command=self.on_language_change
+        )
+        self.language_dropdown.pack(pady=5)
+
+    def clear_main_frame(self):
+        for widget in self.fact_frame.winfo_children():
+            widget.destroy()
+
+    def on_country_select(self, country):
+        self.clear_main_frame()
+        self.current_view = "facts"
+        
+        loading_frame = ctk.CTkFrame(self.fact_frame, fg_color="transparent")
+        loading_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        loading_label = ctk.CTkLabel(
+            loading_frame,
+            text="Loading facts...",
+            font=("Roboto", 16),
+            text_color=WHITE
+        )
+        loading_label.pack(pady=20)
+        
+        self.after(1000, lambda: self._display_generated_fact("country", loading_frame, country))
+
+    def _display_generated_fact(self, category, loading_frame, country=None):
+        loading_frame.destroy()
+        
         try:
-            font = ImageFont.truetype(font_path, font_size)
-        except:
-            font = ImageFont.load_default()
-        bbox = font.getbbox(self._text)
-        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        img = Image.new("RGBA", (w+8, h+8), (0,0,0,0))
-        draw = ImageDraw.Draw(img)
-        draw.text((4,4), self._text, font=font, fill="black")
-        draw.text((2,2), self._text, font=font, fill=ACCENT_COLOR)
-        ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
-        self.configure(image=ctk_img, text="")
-        self.image = ctk_img
+            # Get fact based on category
+            if category.lower() == "random":
+                categories = ["History", "Mathematics", "Science"]
+                category = random.choice(categories)
+            
+            if category.lower() in ["history", "countries"]:
+                fact_data = self.api.get_history_fact(country)
+            elif category.lower() == "mathematics":
+                fact_data = self.api.get_math_fact()
+            elif category.lower() == "science":
+                fact_data = self.api.get_trivia_fact("Science")
+            else:
+                fact_data = self.api.get_trivia_fact("Science")  # Default to science
+            
+            # Update fact counter
+            self.facts_viewed += 1
+            self.fact_counter.configure(text=f"Facts viewed: {self.facts_viewed}")
+            
+            # Create modern card design
+            fact_card = ctk.CTkFrame(self.fact_frame, **card_style)
+            fact_card.pack(expand=True, fill="both", padx=40, pady=40)
+            
+            # Category badge
+            badge_style = button_style.copy()
+            badge_style["height"] = 32
+            category_badge = ctk.CTkButton(
+                fact_card,
+                text=category.title(),
+                width=100,
+                **badge_style
+            )
+            category_badge.pack(pady=(20, 10), padx=20)
+            
+            # Fact text
+            fact_label = ctk.CTkLabel(
+                fact_card,
+                text=fact_data["fact"],
+                font=("Roboto", 16),
+                text_color=WHITE,
+                wraplength=600
+            )
+            fact_label.pack(pady=20, padx=40)
+            
+            # Action buttons frame
+            action_frame = ctk.CTkFrame(fact_card, fg_color="transparent")
+            action_frame.pack(fill="x", padx=20, pady=(0, 20))
+            
+            # Left side - source
+            source_label = ctk.CTkLabel(
+                action_frame,
+                text=f"📚 Source: {fact_data['source']}",
+                font=("Roboto", 12),
+                text_color=TEXT_GRAY
+            )
+            source_label.pack(side="left", padx=20)
+            
+            # Right side - buttons
+            buttons_frame = ctk.CTkFrame(action_frame, fg_color="transparent")
+            buttons_frame.pack(side="right", padx=20)
+            
+            # Favorite button
+            favorite_btn = ctk.CTkButton(
+                buttons_frame,
+                text="⭐ Add to Favorites",
+                command=lambda: self.add_to_favorites(fact_data),
+                **button_style
+            )
+            favorite_btn.pack(side="left", padx=5)
+            
+            # Generate another button
+            generate_btn = ctk.CTkButton(
+                buttons_frame,
+                text="🔄 Generate Another",
+                command=lambda: self.generate_fact(category),
+                **button_style
+            )
+            generate_btn.pack(side="left", padx=5)
+            
+        except Exception as e:
+            error_frame = ctk.CTkFrame(self.fact_frame, fg_color=CARD_BG)
+            error_frame.pack(expand=True, fill="both", padx=40, pady=40)
+            
+            error_label = ctk.CTkLabel(
+                error_frame,
+                text="⚠️ Unable to generate fact",
+                font=("Roboto", 20, "bold"),
+                text_color=HIGHLIGHT_COLOR
+            )
+            error_label.pack(pady=(40, 10))
+            
+            retry_btn = ctk.CTkButton(
+                error_frame,
+                text="🔄 Try Again",
+                command=lambda: self.generate_fact(category),
+                **button_style
+            )
+            retry_btn.pack(pady=(10, 40))
 
-class HomePage(ctk.CTkFrame):
-    def __init__(self, parent, controller):
-        super().__init__(parent, fg_color="transparent")
-        NeonLabel(self, text="Welcome to Study Guide AI", font=get_font("Orbitron", 32, "bold")).pack(pady=(40, 10))
-        NeonLabel(self, text="Get vibrant facts and trivia from History, Science, and Math.", font=get_font("Montserrat", 18)).pack(pady=10)
-        ctk.CTkLabel(self, text="Inspired by modern dashboard UIs.", font=get_font("Roboto Slab", 12), text_color="#888888").pack(side="bottom", pady=20)
-
-class CategoriesPage(ctk.CTkFrame):
-    def __init__(self, parent, controller):
-        super().__init__(parent, fg_color="transparent")
-        NeonLabel(self, text="Categories", font=get_font("Orbitron", 26, "bold")).pack(pady=(30, 10))
-        self.category_var = ctk.StringVar(value="History")
-        ctk.CTkSegmentedButton(self, values=["History", "Science", "Math"], variable=self.category_var, fg_color=BUTTON_BG, selected_color=ACCENT_COLOR, text_color=BUTTON_TEXT, font=get_font("Montserrat", 14, "bold")).pack(pady=10)
-        self.fact_label = NeonLabel(self, text="Select a category and click 'Show Fact'.", font=get_font("Montserrat", 18))
-        self.fact_label.pack(pady=30, padx=20, fill="x")
-        self.spinner = LoadingSpinner(self, size=40)
-        self.spinner.pack(pady=5)
-        ctk.CTkButton(self, text="Show Fact", command=self.show_fact, fg_color=ACCENT_COLOR, text_color="#fff", corner_radius=20, font=get_font("Montserrat", 18, "bold"), hover_color=BUTTON_ACTIVE).pack(pady=10)
-
-    def show_fact(self):
-        category = self.category_var.get()
-        self.fact_label.configure(text="")
-        self.spinner.start()
-        play_audio(WAITING_AUDIO, loop=True)
-        threading.Thread(target=self._fetch_fact, args=(category,), daemon=True).start()
-
-    def _fetch_fact(self, category):
-        time.sleep(1.5)
-        fact = fetch_fact(category)
-        stop_audio()
-        play_audio(PROMPT_AUDIO)
-        self.spinner.stop()
-        self.fact_label._text = fact
-        self.fact_label._render_neon()
-
-class RandomPage(ctk.CTkFrame):
-    def __init__(self, parent, controller):
-        super().__init__(parent, fg_color="transparent")
-        NeonLabel(self, text="Random Fact", font=get_font("Orbitron", 26, "bold")).pack(pady=(30, 10))
-        self.fact_label = NeonLabel(self, text="Click below for a random fact!", font=get_font("Montserrat", 18))
-        self.fact_label.pack(pady=30, padx=20, fill="x")
-        self.spinner = LoadingSpinner(self, size=40)
-        self.spinner.pack(pady=5)
-        ctk.CTkButton(self, text="Show Random Fact", command=self.show_random_fact, fg_color=ACCENT_COLOR, text_color="#fff", corner_radius=20, font=get_font("Montserrat", 18, "bold"), hover_color=BUTTON_ACTIVE).pack(pady=10)
-
-    def show_random_fact(self):
-        category = random.choice(["History", "Science", "Math"])
-        self.fact_label.configure(text="")
-        self.spinner.start()
-        play_audio(WAITING_AUDIO, loop=True)
-        threading.Thread(target=self._fetch_fact, args=(category,), daemon=True).start()
-
-    def _fetch_fact(self, category):
-        time.sleep(1.5)
-        fact = fetch_fact(category)
-        stop_audio()
-        play_audio(PROMPT_AUDIO)
-        self.spinner.stop()
-        self.fact_label._text = fact
-        self.fact_label._render_neon()
-
-class SettingsPage(ctk.CTkFrame):
-    def __init__(self, parent, controller):
-        super().__init__(parent, fg_color="transparent")
-        NeonLabel(self, text="Settings", font=get_font("Orbitron", 26, "bold")).pack(pady=(30, 10))
-        self.fullscreen_var = ctk.BooleanVar(value=False)
-        ctk.CTkSwitch(self, text="Full Screen Mode", variable=self.fullscreen_var, command=self.toggle_fullscreen, fg_color=ACCENT_COLOR, font=get_font("Montserrat", 16)).pack(pady=20)
-        ctk.CTkLabel(self, text="(More settings coming soon!)", font=get_font("Roboto Slab", 16), text_color=ACCENT_COLOR).pack(pady=30)
-        self.controller = controller
+    def add_to_favorites(self, fact_text):
+        if fact_text not in self.favorite_facts:
+            self.favorite_facts.add(fact_text)
+            favorite_label = ctk.CTkLabel(
+                self.favorites_frame,
+                text=fact_text,
+                font=("Roboto", 12),
+                text_color=WHITE,
+                wraplength=200
+            )
+            favorite_label.pack(pady=5, padx=5)
 
     def toggle_fullscreen(self):
-        self.controller.toggle_fullscreen(self.fullscreen_var.get())
+        self.is_fullscreen = not self.is_fullscreen
+        self.attributes("-fullscreen", self.is_fullscreen)
 
-class InfoPage(ctk.CTkFrame):
-    def __init__(self, parent, controller):
-        super().__init__(parent, fg_color="transparent")
-        NeonLabel(self, text="About", font=get_font("Orbitron", 26, "bold")).pack(pady=(30, 10))
-        NeonLabel(self, text="Study Guide AI\nCreated for ICS3U Assignment\nUses Open Trivia DB and Numbers API for facts.", font=get_font("Montserrat", 18)).pack(pady=30)
-        ctk.CTkLabel(self, text="UI inspired by modern dashboards.", font=get_font("Roboto Slab", 12), text_color="#888888").pack(side="bottom", pady=20)
+    def exit_fullscreen(self):
+        self.is_fullscreen = False
+        self.attributes("-fullscreen", False)
+
+    def on_theme_change(self, theme):
+        self.settings["theme"] = theme
+        self.save_settings()
+
+    def on_language_change(self, language):
+        self.settings["language"] = language
+        self.save_settings()
+
+    def save_settings(self):
+        with open("settings.json", "w") as f:
+            json.dump(self.settings, f, indent=4)
+
+    # Add this method to the FactFinderApp class
+    def generate_fact(self, category):
+        self.clear_main_frame()
+        
+        # Show loading animation
+        loading_frame = ctk.CTkFrame(self.fact_frame, fg_color="transparent")
+        loading_frame.pack(expand=True, fill="both")
+        
+        loading_label = ctk.CTkLabel(
+            loading_frame,
+            text="🔄 Generating fact...",
+            font=("Roboto", 16),
+            text_color=WHITE
+        )
+        loading_label.pack(expand=True)
+        
+        # Use after to simulate loading and get fact
+        self.after(800, lambda: self._display_generated_fact(category, loading_frame))
+        
+        # Update fact counter
+        self.facts_viewed += 1
+        self.fact_counter.configure(text=f"Facts viewed: {self.facts_viewed}")
 
 if __name__ == "__main__":
-    app = StudyGuideApp()
+    app = FactFinderApp()
     app.mainloop()
