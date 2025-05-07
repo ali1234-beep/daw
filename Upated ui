@@ -1,617 +1,2023 @@
-import customtkinter as ctk
-import json
-import sqlite3
-import requests
-from pathlib import Path
-import os
-from PIL import Image, ImageTk
-from database.db_handler import DatabaseHandler
-from utils.api_handler import FactAPI
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog, font
+import socket
+import csv
 import random
+from PIL import Image, ImageTk # Used for ImageViewer and potentially Character Customizer
+import requests # Needed for API calls (Weather, Translator, Online Facts/Quiz, Stocks)
+import html # Needed to decode HTML entities from some APIs (like Open Trivia Database)
+import os # Needed for file existence checks (Images, Character Customizer)
+import sqlite3 # Needed for To-Do list data persistence
+import math # Needed for Calculator sqrt and pow
 
-# Theme Colors
-DARK_BLUE = "#1B2838"
-LIGHT_BLUE = "#66C0F4"
-ACCENT_BLUE = "#1E3F66"
-WHITE = "#FFFFFF"
-GRAY = "#707070"
-GRADIENT_DARK = "#1a237e"
-GRADIENT_LIGHT = "#4a148c"
-BUTTON_ACTIVE = "#3498db"
-HIGHLIGHT_COLOR = "#FF6B6B"  # Coral color for highlights
-SUCCESS_GREEN = "#2ecc71"
-WARNING_YELLOW = "#f1c40f"
-GRADIENT_START = "#1a237e"
-GRADIENT_END = "#4a148c"
+# --- Color Palette (Reverted to original dark theme with enhanced cyan/neon accent) ---
+COLOR_PRIMARY_BG = "#161A25" # Original Dark background
+COLOR_SECONDARY_BG = "#232939" # Original Slightly lighter background for containers/sidebar
+COLOR_WIDGET_BG = "#2A3042" # Original Background for inputs, listboxes, etc.
+COLOR_ACCENT = "#00ACC1" # Original Main accent color (cyan) - Can feel neon on dark background
+COLOR_ACCENT_HOVER = "#00C4DA" # Lighter accent for hover (more vibrant)
+COLOR_TEXT_PRIMARY = "#ECEFF1" # Original Off-white text for main content
+COLOR_TEXT_SECONDARY = "#B0BEC5" # Original Lighter grey text for secondary info/disabled
+COLOR_TEXT_ACCENT_FG = "#FFFFFF" # White text on accent background
+COLOR_TEXT_ON_ACCENT_BG = "#161A25" # Dark text for buttons with accent bg (Original BG color)
+COLOR_BORDER = "#37474F" # Original Border color
+COLOR_DISABLED_FG = "#78909C" # Original Grey text for disabled elements
+COLOR_SUCCESS = "#03DAC6" # Teal for success messages/indicators (close to neon green/cyan)
+COLOR_ERROR = "#CF6679" # Red for error messages/indicators (can feel neon pink/red)
 
-# Update the color scheme
-DARK_BG = "#0A1929"  # Darker blue background
-CARD_BG = "#132F4C"  # Lighter blue for cards
-ACCENT_PURPLE = "#9C27B0"  # Purple accent
-ACCENT_ORANGE = "#FF9800"  # Orange accent
-TEXT_WHITE = "#FFFFFF"
-TEXT_GRAY = "#B2BAC2"
-BUTTON_HOVER = "#6B57FF"
+# Fonts (adjust as needed for your OS)
+FONT_FAMILY_PRIMARY = "Segoe UI" # Windows
+FONT_FAMILY_FALLBACK = "Arial"
 
-# Update button style configuration
-button_style = {
-    "corner_radius": 12,
-    "border_width": 0,
-    "fg_color": ACCENT_PURPLE,
-    "hover_color": BUTTON_HOVER,
-    "font": ("Roboto", 14, "bold"),
-    "height": 40
-}
+# Font tuples will be defined AFTER the root window is created
+FONT_NORMAL = None
+FONT_BOLD = None
+FONT_LARGE = None
+FONT_BUTTON = None
+FONT_ICON = None
+current_font_family = FONT_FAMILY_FALLBACK # Initialize with fallback
 
-# Update card style configuration
-card_style = {
-    "corner_radius": 15,
-    "fg_color": CARD_BG,
-    "border_width": 1,
-    "border_color": "#1E4976"
-}
 
-class FactFinderApp(ctk.CTk):
+# --- API Keys (Replace with your actual keys) ---
+# You will need to sign up for these services to get keys
+# Alpha Vantage for Stock Data: https://www.alphavantage.co/
+# LibreTranslate for Translation (can run locally or use a public instance): https://libretranslate.com/
+# Trivia API for Facts/Quiz: https://opentdb.com/
+# Numbers API for Facts: http://numbersapi.com/ (doesn't require key for basic use)
+# OpenWeatherMap for Weather: https://openweathermap.org/api (requires key for anything beyond basic)
+
+ALPHA_VANTAGE_API_KEY = "YOUR_ALPHA_VANTAGE_API_KEY" # Replace with your key
+LIBRETRANSLATE_API_URL = "https://translate.astian.org/translate" # Public LibreTranslate instance URL, or your own
+OPENWEATHER_API_KEY = "YOUR_OPENWEATHER_API_KEY" # Replace with your key
+
+# --- Helper Functions ---
+
+def get_local_ip():
+    """Attempts to get the local IP address."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Doesn't actually send data, just connects to a common internet address
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        return local_ip
+    except socket.error:
+        return "N/A"
+
+def kelvin_to_celsius(kelvin):
+    """Converts Kelvin temperature to Celsius."""
+    return round(kelvin - 273.15, 2)
+
+def kelvin_to_fahrenheit(kelvin):
+    """Converts Kelvin temperature to Fahrenheit."""
+    celsius = kelvin_to_celsius(kelvin)
+    fahrenheit = (celsius * 9/5) + 32
+    return round(fahrenheit, 2)
+
+# --- API Call Functions ---
+
+def fetch_random_fact_api():
+    """Fetches a random fact from a public API (Numbers API or Trivia API)."""
+    try:
+        # Using Numbers API as a default simple fact source
+        url = "http://numbersapi.com/random/trivia"
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.text.strip()
+
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching fact from API: {e}")
+        return "Failed to fetch an online fact. Please try again later."
+    except Exception as e:
+        print(f"An unexpected error occurred during fact API call: {e}")
+        return "An error occurred while getting an online fact."
+
+
+def fetch_quiz_questions_api(amount=5, difficulty="easy", type="multiple"):
+    """Fetches quiz questions from the Open Trivia Database API."""
+    try:
+        # Example URL for Open Trivia Database (https://opentdb.com/api_config.php)
+        url = f"https://opentdb.com/api.php?amount={amount}&difficulty={difficulty}&type={type}"
+        response = requests.get(url)
+        response.raise_for_status() # Raise an HTTPError for bad responses
+        data = response.json()
+
+        if data["response_code"] == 0: # Success
+            questions_list = []
+            for q_data in data["results"]:
+                # Decode HTML entities in question, answers, and options
+                question_text = html.unescape(q_data["question"])
+                correct_answer = html.unescape(q_data["correct_answer"])
+                incorrect_answers = [html.unescape(ans) for ans in q_data["incorrect_answers"]]
+                options = incorrect_answers + [correct_answer]
+                random.shuffle(options) # Shuffle options for multiple choice
+
+                questions_list.append({
+                    "category": q_data["category"],
+                    "type": q_data["type"],
+                    "difficulty": q_data["difficulty"],
+                    "question": question_text,
+                    "options": options,
+                    "answer": correct_answer
+                })
+            return questions_list
+        else:
+            print(f"Trivia API Error: Response Code {data['response_code']}")
+            # Handle specific response codes if needed (e.g., 1: No Results, 2: Invalid Parameter)
+            error_messages = {
+                1: "No results found for the selected criteria.",
+                2: "Invalid API parameters.",
+                3: "Token Not Found.",
+                4: "Token Empty.",
+                5: "Rate Limit.",
+                -1: "Unknown API error." # Custom code for unhandled errors
+            }
+            error_code = data["response_code"] if data["response_code"] in error_messages else -1
+            return [{"error": error_messages[error_code]}] # Return an error indicator
+
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching quiz questions from API: {e}")
+        return [{"error": f"Failed to fetch quiz questions: {e}"}]
+    except Exception as e:
+        print(f"An unexpected error occurred during quiz API call: {e}")
+        return [{"error": f"An error occurred: {e}"}]
+
+
+def translate_text_api(input_text, source_lang_code, target_lang_code):
+    """Translates text using a translation API (e.g., LibreTranslate)."""
+    if not LIBRETRANSLATE_API_URL or LIBRETRANSLATE_API_URL == "YOUR_LIBRETRANSLATE_API_URL":
+         print("LibreTranslate API URL is not configured.")
+         return "[Translation API URL not configured]"
+
+    try:
+        # Using LibreTranslate API structure
+        payload = {
+            "q": input_text,
+            "source": source_lang_code,
+            "target": target_lang_code,
+            "format": "text" # or "html"
+            # "api_key": "YOUR_API_KEY" # Uncomment if using a key
+        }
+        response = requests.post(LIBRETRANSLATE_API_URL, json=payload)
+        response.raise_for_status() # Raise an HTTPError for bad responses
+        data = response.json()
+
+        return data.get("translatedText", "Translation failed.")
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error translating text via API: {e}")
+        return f"Failed to translate text: {e}"
+    except Exception as e:
+        print(f"An unexpected error occurred during translation API call: {e}")
+        return f"An error occurred during translation: {e}"
+
+# Helper to map full language names to codes for LibreTranslate (example subset)
+def get_lang_code(lang_name):
+    """Maps full language names to ISO 639-1 codes for translation API."""
+    lang_map = {
+        "English": "en",
+        "Spanish": "es",
+        "French": "fr",
+        "German": "de",
+        "Chinese": "zh", # Using zh for simplified Chinese as a common default
+        "Japanese": "ja",
+        "Simlish": "xx" # Placeholder code for Simlish
+        # Add more languages as supported by the API
+    }
+    return lang_map.get(lang_name, "auto") # Use "auto" or a default if not found
+
+def fetch_weather_api(location):
+    """Fetches weather data from OpenWeatherMap API."""
+    if not OPENWEATHER_API_KEY or OPENWEATHER_API_KEY == "YOUR_OPENWEATHER_API_KEY":
+        print("OpenWeatherMap API Key is not configured.")
+        return {"error": "Weather API Key not configured."}
+
+    base_url = "http://api.openweathermap.org/data/2.5/weather?"
+    # You might need to use a geocoding API first to get lat/lon from city name/zip code
+    # For simplicity, this example assumes the API can handle city names directly or you use a different endpoint.
+    # A more robust version would use the 'q=' parameter or geocoding.
+    complete_url = base_url + "appid=" + OPENWEATHER_API_KEY + "&q=" + location
+    try:
+        response = requests.get(complete_url)
+        response.raise_for_status()
+        data = response.json()
+
+        if data["cod"] != "404": # Check if city is found
+            main_data = data["main"]
+            weather_data = data["weather"][0]
+
+            temperature_k = main_data["temp"]
+            temperature_c = kelvin_to_celsius(temperature_k)
+            temperature_f = kelvin_to_fahrenheit(temperature_k)
+            humidity = main_data["humidity"]
+            description = weather_data["description"].capitalize()
+            wind_speed = data["wind"]["speed"] # in meters/sec by default
+
+            return {
+                "location": data["name"],
+                "temperature_c": temperature_c,
+                "temperature_f": temperature_f,
+                "description": description,
+                "humidity": humidity,
+                "wind_speed_mps": wind_speed # meters per second
+                # Add more data as needed
+            }
+        else:
+            return {"error": "City Not Found"}
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching weather from API: {e}")
+        return {"error": f"Failed to fetch weather: {e}"}
+    except Exception as e:
+        print(f"An unexpected error occurred during weather API call: {e}")
+        return {"error": f"An error occurred: {e}"}
+
+
+def fetch_stock_data_api(ticker):
+    """Fetches basic stock data from Alpha Vantage API."""
+    if not ALPHA_VANTAGE_API_KEY or ALPHA_VANTAGE_API_KEY == "YOUR_ALPHA_VANTAGE_API_KEY":
+        print("Alpha Vantage API Key is not configured.")
+        return {"error": "Stock API Key not configured."}
+
+    # Using TIME_SERIES_DAILY adjusted endpoint for recent data
+    url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={ticker}&apikey={ALPHA_VANTAGE_API_KEY}"
+
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+
+        if "Time Series (Daily)" in data:
+            time_series = data["Time Series (Daily)"]
+            # Get the most recent day's data
+            latest_date = list(time_series.keys())[0]
+            latest_data = time_series[latest_date]
+
+            open_price = latest_data["1. open"]
+            high_price = latest_data["2. high"]
+            low_price = latest_data["3. low"]
+            close_price = latest_data["4. close"]
+            volume = latest_data["6. volume"]
+
+            # Simple trend indicator based on last 5 days (if available)
+            dates = list(time_series.keys())[:5] # Get last 5 dates
+            if len(dates) > 1:
+                # Compare latest closing price to closing price 4 days ago
+                oldest_date = dates[-1]
+                oldest_close = float(time_series[oldest_date]["4. close"])
+                latest_close = float(close_price)
+
+                if latest_close > oldest_close:
+                    trend = "Up"
+                elif latest_close < oldest_close:
+                    trend = "Down"
+                else:
+                    trend = "Stable"
+            else:
+                trend = "N/A (Insufficient data)"
+
+
+            return {
+                "symbol": ticker.upper(),
+                "latest_date": latest_date,
+                "open": float(open_price),
+                "high": float(high_price),
+                "low": float(low_price),
+                "close": float(close_price),
+                "volume": int(volume),
+                "trend_5day": trend
+                # Add more data as needed
+            }
+        elif "Error Message" in data:
+             return {"error": f"Stock Ticker Error: {data['Error Message']}"}
+        else:
+             return {"error": "Could not retrieve stock data."}
+
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching stock data from API: {e}")
+        return {"error": f"Failed to fetch stock data: {e}"}
+    except Exception as e:
+        print(f"An unexpected error occurred during stock API call: {e}")
+        return {"error": f"An error occurred: {e}"}
+
+
+# --- Base App Frame ---
+
+class BaseAppFrame(ttk.Frame):
+    def __init__(self, parent, app_name="App", icon="⚙️", **kwargs):
+        super().__init__(parent, style="App.TFrame", **kwargs)
+        self.app_name = app_name
+        self.icon = icon
+        # Info frame is created and placed by subclasses' create_widgets method
+        self.info_frame = None
+        self.info_label = None
+
+
+    def create_widgets(self):
+        # To be implemented by subclasses
+        lbl = ttk.Label(self, text=f"{self.app_name} content here", style="Header.TLabel")
+        lbl.pack(padx=20, pady=20)
+
+    # Helper to create info widgets, called by subclasses
+    def _create_and_get_info_frame(self, parent_widget):
+        """Creates the info section widgets within the given parent widget and returns the frame."""
+        info_frame = ttk.LabelFrame(parent_widget, text=f"About {self.app_name}", style="App.TLabelframe")
+        self.info_frame = info_frame # Store reference
+
+        self.info_label = ttk.Label(info_frame, text=self.get_app_info(), style="SecondaryText.TLabel", wraplength=700)
+        self.info_label.pack(padx=10, pady=5, anchor="w")
+
+        return info_frame # Return the created frame
+
+    def get_app_info(self):
+        """Returns a fact or info about the app's topic."""
+        # This method should be overridden by subclasses
+        return f"Learn more about {self.app_name}!"
+
+    def on_show(self):
+        """Called when the frame is shown."""
+        pass
+
+    def on_hide(self):
+        """Called when the frame is hidden."""
+        pass
+
+# --- Individual App Classes (with added features and UI polish) ---
+# ENSURE these classes are defined BEFORE MultifunctionalApp
+
+class UnitConverterApp(BaseAppFrame):
+    def __init__(self, parent):
+        super().__init__(parent, app_name="Units", icon="📏")
+        self.precision_var = tk.IntVar(value=2) # Default decimal precision
+        self.unit_system_var = tk.StringVar(value="Metric") # Default unit system
+        self.create_widgets()
+
+    def create_widgets(self):
+        padx = 15
+        pady = 10
+        entry_width = 15
+
+        main_frame = ttk.Frame(self, style="App.TFrame")
+        main_frame.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
+
+        ttk.Label(main_frame, text="Unit Converter", style="Header.TLabel").grid(row=0, column=0, columnspan=5, pady=(0, pady*2), sticky="w") # Increased columnspan
+
+        # Options Frame (Precision and Unit System)
+        options_frame = ttk.LabelFrame(main_frame, text="Options", style="App.TLabelframe")
+        options_frame.grid(row=1, column=0, columnspan=5, padx=padx, pady=pady, sticky="ew")
+
+        ttk.Label(options_frame, text="Decimal Precision:", style="SecondaryText.TLabel").pack(side=tk.LEFT, padx=5, pady=5)
+        precision_options = [0, 1, 2, 3, 4, 5]
+        self.precision_spinbox = ttk.Spinbox(options_frame, from_=0, to=5, textvariable=self.precision_var, state="readonly", width=5, style="App.TSpinbox")
+        self.precision_spinbox.pack(side=tk.LEFT, padx=5, pady=5)
+        # Bind virtual event and trace variable for changes
+        self.precision_spinbox.bind("<<SpinboxValuechanged>>", lambda event: self.convert())
+        self.precision_var.trace_add("write", lambda name, index, mode: self.convert()) # Also trace variable writes
+
+
+        ttk.Label(options_frame, text="Unit System:", style="SecondaryText.TLabel").pack(side=tk.LEFT, padx=15, pady=5)
+        unit_systems = ["Metric", "Imperial (US)"]
+        self.unit_system_combo = ttk.Combobox(options_frame, textvariable=self.unit_system_var, values=unit_systems, state="readonly", style="App.TCombobox", width=15)
+        self.unit_system_combo.pack(side=tk.LEFT, padx=5, pady=5)
+        self.unit_system_combo.bind("<<ComboboxSelected>>", lambda event: self.update_fields_based_on_units())
+
+
+        # Conversion Fields
+        fields = [
+            ("Kilometers:", "km_entry", "Miles:", "miles_result_label"),
+            ("Celsius:", "celsius_entry", "Fahrenheit:", "fahrenheit_result_label"),
+            ("Kilograms:", "kg_entry", "Pounds:", "pounds_result_label"),
+        ]
+
+        self.entries = {}
+        self.result_labels = {}
+        self.input_labels = {} # To update input labels based on unit system
+
+        for i, (text1, entry_key, text2, result_key) in enumerate(fields):
+            # Store input labels to update their text
+            self.input_labels[entry_key] = ttk.Label(main_frame, text=text1, style="SecondaryText.TLabel")
+            self.input_labels[entry_key].grid(row=i+2, column=0, padx=padx, pady=pady, sticky="w") # Adjusted row
+
+            self.entries[entry_key] = ttk.Entry(main_frame, width=entry_width, style="App.TEntry")
+            self.entries[entry_key].grid(row=i+2, column=1, padx=padx, pady=pady, sticky="ew") # Adjusted row
+            # Bind <Return> key to convert
+            self.entries[entry_key].bind("<Return>", lambda event: self.convert())
+
+
+            # Store result labels to update their text
+            self.result_labels[result_key] = ttk.Label(main_frame, text=text2, style="SecondaryText.TLabel") # This is the label *before* the result value
+            self.result_labels[result_key].grid(row=i+2, column=2, padx=padx, pady=pady, sticky="w") # Adjusted row
+
+            self.result_labels[f"{result_key}_value"] = ttk.Label(main_frame, text="", style="Result.TLabel", width=entry_width) # The actual result value label
+            self.result_labels[f"{result_key}_value"].grid(row=i+2, column=3, padx=padx, pady=pady, sticky="ew") # Adjusted row
+
+
+        convert_button = ttk.Button(main_frame, text="Convert", command=self.convert, style="Accent.TButton")
+        convert_button.grid(row=len(fields)+2, column=0, columnspan=5, padx=padx, pady=pady*2) # Adjusted row and columnspan
+
+
+        # Configure grid weights
+        main_frame.grid_columnconfigure(1, weight=1) # Entry column
+        main_frame.grid_columnconfigure(3, weight=1) # Result value column
+        for i in range(len(fields)):
+             main_frame.grid_rowconfigure(i+2, weight=0) # Conversion rows
+
+        # Create and grid the info section within main_frame
+        info_frame = self._create_and_get_info_frame(main_frame) # Pass main_frame as parent
+        info_frame.grid(row=len(fields)+3, column=0, columnspan=5, padx=10, pady=10, sticky="ew") # Grid info_frame within main_frame
+
+
+        self.update_fields_based_on_units() # Set initial field labels
+
+
+    def update_fields_based_on_units(self):
+        """Updates input and output labels based on the selected unit system."""
+        system = self.unit_system_var.get()
+
+        if system == "Metric":
+            self.input_labels["km_entry"].config(text="Kilometers:")
+            self.result_labels["miles_result_label"].config(text="Miles:")
+            self.input_labels["celsius_entry"].config(text="Celsius:")
+            self.result_labels["fahrenheit_result_label"].config(text="Fahrenheit:")
+            self.input_labels["kg_entry"].config(text="Kilograms:")
+            self.result_labels["pounds_result_label"].config(text="Pounds:")
+        elif system == "Imperial (US)":
+            self.input_labels["km_entry"].config(text="Miles:")
+            self.result_labels["miles_result_label"].config(text="Kilometers:")
+            self.input_labels["celsius_entry"].config(text="Fahrenheit:")
+            self.result_labels["fahrenheit_result_label"].config(text="Celsius:")
+            self.input_labels["kg_entry"].config(text="Pounds:")
+            self.result_labels["pounds_result_label"].config(text="Kilograms:")
+
+        # Clear entries and results when changing units
+        for entry in self.entries.values():
+            entry.delete(0, tk.END)
+        for label_key in self.result_labels.keys():
+            if label_key.endswith("_value"):
+                 self.result_labels[label_key].config(text="")
+        # Trigger conversion with empty values to clear results based on new units
+        self.convert()
+
+
+    def convert(self):
+        precision = self.precision_var.get()
+        system = self.unit_system_var.get()
+
+        try:
+            if system == "Metric":
+                # KM to Miles
+                km_input = self.entries["km_entry"].get()
+                if km_input:
+                    km = float(km_input)
+                    miles = round(km * 0.621371, precision)
+                    self.result_labels["miles_result_label_value"].config(text=f"{miles}")
+                else:
+                    self.result_labels["miles_result_label_value"].config(text="")
+
+                # Celsius to Fahrenheit
+                celsius_input = self.entries["celsius_entry"].get()
+                if celsius_input:
+                    celsius = float(celsius_input)
+                    fahrenheit = round((celsius * 9/5) + 32, precision)
+                    self.result_labels["fahrenheit_result_label_value"].config(text=f"{fahrenheit}")
+                else:
+                    self.result_labels["fahrenheit_result_label_value"].config(text="")
+
+                # KG to Pounds
+                kg_input = self.entries["kg_entry"].get()
+                if kg_input:
+                    kg = float(kg_input)
+                    pounds = round(kg * 2.20462, precision)
+                    self.result_labels["pounds_result_label_value"].config(text=f"{pounds}")
+                else:
+                    self.result_labels["pounds_result_label_value"].config(text="")
+
+            elif system == "Imperial (US)":
+                # Miles to KM
+                miles_input = self.entries["km_entry"].get() # km_entry is now miles input
+                if miles_input:
+                    miles = float(miles_input)
+                    km = round(miles / 0.621371, precision)
+                    self.result_labels["miles_result_label_value"].config(text=f"{km}")
+                else:
+                     self.result_labels["miles_result_label_value"].config(text="")
+
+                # Fahrenheit to Celsius
+                fahrenheit_input = self.entries["celsius_entry"].get() # celsius_entry is now fahrenheit input
+                if fahrenheit_input:
+                    fahrenheit = float(fahrenheit_input)
+                    celsius = round((fahrenheit - 32) * 5/9, precision)
+                    self.result_labels["fahrenheit_result_label_value"].config(text=f"{celsius}")
+                else:
+                     self.result_labels["fahrenheit_result_label_value"].config(text="")
+
+                # Pounds to KG
+                pounds_input = self.entries["kg_entry"].get() # kg_entry is now pounds input
+                if pounds_input:
+                    pounds = float(pounds_input)
+                    kg = round(pounds / 2.20462, precision)
+                    self.result_labels["pounds_result_label_value"].config(text=f"{kg}")
+                else:
+                     self.result_labels["pounds_result_label_value"].config(text="")
+
+
+        except ValueError:
+            messagebox.showerror("Error", "Invalid input. Please enter numbers.", parent=self)
+            # Clear results on error
+            for label_key in self.result_labels.keys():
+                 if label_key.endswith("_value"):
+                      self.result_labels[label_key].config(text="")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"An unexpected error occurred: {e}", parent=self)
+            # Clear results on error
+            for label_key in self.result_labels.keys():
+                 if label_key.endswith("_value"):
+                      self.result_labels[label_key].config(text="")
+
+    def get_app_info(self):
+        return "Unit conversion has been used throughout history for trade and science. Modern standards like the Metric system simplify global communication."
+
+
+class ToDoListApp(BaseAppFrame):
+    def __init__(self, parent):
+        super().__init__(parent, app_name="To-Do", icon="✅")
+        self.db_name = "todo_list.db"
+        self._init_db() # Initialize database
+        self.tasks = self._load_tasks_from_db() # Load tasks from database
+        self.create_widgets()
+        self._update_listbox() # Populate listbox with loaded tasks
+
+    def _init_db(self):
+        """Initializes the SQLite database and creates the tasks table if it doesn't exist."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    text TEXT NOT NULL UNIQUE, -- Added UNIQUE constraint
+                    completed BOOLEAN NOT NULL DEFAULT 0
+                )
+            ''')
+            conn.commit()
+            conn.close()
+        except sqlite3.Error as e:
+            print(f"Database initialization error: {e}")
+            messagebox.showerror("Database Error", "Could not initialize the to-do list database.", parent=self)
+
+    def _load_tasks_from_db(self):
+        """Loads tasks from the database."""
+        tasks_list = []
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            # Select id as well, as it's a more reliable identifier than text
+            cursor.execute("SELECT id, text, completed FROM tasks ORDER BY id")
+            for row in cursor.fetchall():
+                # Store the id along with text and completed status
+                tasks_list.append({"id": row[0], "text": row[1], "completed": bool(row[2])})
+            conn.close()
+        except sqlite3.Error as e:
+            print(f"Database load error: {e}")
+            messagebox.showerror("Database Error", "Could not load tasks from the database.", parent=self)
+        return tasks_list
+
+    def _save_task_to_db(self, task_text, completed=False):
+        """Saves a single new task to the database."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO tasks (text, completed) VALUES (?, ?)", (task_text, completed))
+            task_id = cursor.lastrowid # Get the ID of the newly inserted row
+            conn.commit()
+            conn.close()
+            return task_id # Return the new ID
+        except sqlite3.IntegrityError:
+             # This happens if the UNIQUE constraint on text is violated
+             messagebox.showwarning("Warning", "Task already exists in the list.", parent=self)
+             return None # Indicate failure due to duplicate
+        except sqlite3.Error as e:
+            print(f"Database save error: {e}")
+            messagebox.showerror("Database Error", "Could not save task to the database.", parent=self)
+            return None # Indicate other database error
+
+
+    def _delete_task_from_db(self, task_id):
+        """Deletes a task from the database by its id."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            conn.commit()
+            conn.close()
+        except sqlite3.Error as e:
+            print(f"Database delete error: {e}")
+            messagebox.showerror("Database Error", "Could not delete task from the database.", parent=self)
+
+    def _update_task_completion_in_db(self, task_id, completed):
+        """Updates the completion status of a task in the database by its id."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE tasks SET completed = ? WHERE id = ?", (completed, task_id))
+            conn.commit()
+            conn.close()
+        except sqlite3.Error as e:
+            print(f"Database update error: {e}")
+            messagebox.showerror("Database Error", "Could not update task completion in the database.", parent=self)
+
+
+    def create_widgets(self):
+        main_frame = ttk.Frame(self, style="App.TFrame")
+        main_frame.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
+        main_frame.grid_columnconfigure(0, weight=3)
+        main_frame.grid_columnconfigure(1, weight=1)
+        main_frame.grid_columnconfigure(2, weight=0) # Scrollbar column
+        main_frame.grid_rowconfigure(2, weight=1)
+
+
+        ttk.Label(main_frame, text="To-Do List", style="Header.TLabel").grid(row=0, column=0, columnspan=3, pady=(0,10), sticky="w")
+
+        self.task_entry = ttk.Entry(main_frame, style="App.TEntry", width=30)
+        self.task_entry.grid(row=1, column=0, padx=(0,5), pady=10, sticky="ew")
+        self.task_entry.bind("<Return>", lambda event: self.add_task()) # Bind Return key
+
+        self.add_button = ttk.Button(main_frame, text="Add Task", command=self.add_task, style="App.TButton")
+        self.add_button.grid(row=1, column=1, pady=10, sticky="ew")
+
+        # Using standard Listbox for direct color/font control
+        # Now stores the original task dictionary index or potentially DB ID
+        self.task_listbox = tk.Listbox(main_frame, height=10, width=45,
+                                         bg=COLOR_WIDGET_BG, fg=COLOR_TEXT_PRIMARY,
+                                         selectbackground=COLOR_ACCENT, selectforeground=COLOR_TEXT_ON_ACCENT_BG,
+                                         font=FONT_NORMAL, borderwidth=1, relief="flat",
+                                         highlightthickness=1, highlightbackground=COLOR_BORDER, highlightcolor=COLOR_ACCENT)
+        self.task_listbox.grid(row=2, column=0, columnspan=2, pady=10, sticky="nsew")
+
+        # Scrollbar for Listbox
+        scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.task_listbox.yview, style="App.Vertical.TScrollbar")
+        scrollbar.grid(row=2, column=2, pady=10, sticky="ns")
+        self.task_listbox.config(yscrollcommand=scrollbar.set)
+
+        button_frame = ttk.Frame(main_frame, style="App.TFrame")
+        button_frame.grid(row=3, column=0, columnspan=3, pady=10, sticky="ew")
+
+        self.complete_button = ttk.Button(button_frame, text="Complete/Incomplete", command=self.complete_task, style="Accent.TButton")
+        self.complete_button.pack(side=tk.LEFT, expand=True, padx=(0,5))
+
+        self.delete_button = ttk.Button(button_frame, text="Delete", command=self.delete_task, style="Red.TButton")
+        self.delete_button.pack(side=tk.LEFT, expand=True, padx=(5,0))
+
+        # Create and grid the info section within main_frame
+        info_frame = self._create_and_get_info_frame(main_frame) # Pass main_frame as parent
+        info_frame.grid(row=4, column=0, columnspan=3, padx=10, pady=10, sticky="ew") # Grid info_frame within main_frame
+
+
+    def add_task(self):
+        task = self.task_entry.get().strip()
+        if task:
+            # Save to DB first - checks for uniqueness via UNIQUE constraint
+            task_id = self._save_task_to_db(task)
+            if task_id is not None: # Only add to list if DB save was successful (and not a duplicate)
+                 self.tasks.append({"id": task_id, "text": task, "completed": False}) # Add to in-memory list
+                 self._load_tasks_from_db() # Reload tasks to get the correct order/ids after adding
+                 self._update_listbox()
+                 self.task_entry.delete(0, tk.END)
+            # else: _save_task_to_db already showed a warning for duplicates
+        else:
+            messagebox.showwarning("Warning", "Please enter a task.", parent=self)
+
+
+    def _update_listbox(self):
+        """Clears and repopulates the listbox from the in-memory tasks list."""
+        self.task_listbox.delete(0, tk.END)
+        for task_item in self.tasks:
+            display_text = task_item["text"]
+            if task_item["completed"]:
+                display_text += " (Completed)"
+            self.task_listbox.insert(tk.END, display_text)
+            if task_item["completed"]:
+                self.task_listbox.itemconfig(tk.END, {'fg': COLOR_TEXT_SECONDARY})
+
+
+    def complete_task(self):
+        selected_indices = self.task_listbox.curselection()
+        if selected_indices:
+            idx = selected_indices[0]
+            if 0 <= idx < len(self.tasks):
+                 # Toggle completion status in memory
+                current_status = self.tasks[idx]["completed"]
+                new_status = not current_status
+                self.tasks[idx]["completed"] = new_status
+
+                # Update in database using the task ID
+                self._update_task_completion_in_db(self.tasks[idx]["id"], new_status)
+
+                self._update_listbox()
+            else:
+                 # This case should theoretically not happen if idx comes from curselection
+                 print(f"Error: Invalid index {idx} for tasks list of size {len(self.tasks)}")
+        else:
+            messagebox.showinfo("Info", "Select a task to mark as complete/incomplete.", parent=self)
+
+
+    def delete_task(self):
+        selected_indices = self.task_listbox.curselection()
+        if selected_indices:
+            if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this task?", parent=self):
+                idx = selected_indices[0]
+                if 0 <= idx < len(self.tasks):
+                    task_id_to_delete = self.tasks[idx]["id"] # Get ID from in-memory list
+                    del self.tasks[idx] # Remove from in-memory list
+
+                    # Delete from database using the task ID
+                    self._delete_task_from_db(task_id_to_delete)
+
+                    self._update_listbox()
+                else:
+                     # This case should theoretically not happen
+                     print(f"Error: Invalid index {idx} for tasks list of size {len(self.tasks)}")
+        else:
+            messagebox.showinfo("Info", "Select a task to delete.", parent=self)
+
+    def get_app_info(self):
+         return "To-do lists help organize tasks and improve productivity. Keeping a list can reduce stress and free up mental space."
+
+
+class FunFactApp(BaseAppFrame):
+    def __init__(self, parent):
+        # Hardcoded facts as a fallback or initial set
+        self.facts_list = [
+            "Honey never spoils. 🍯",
+            "The Eiffel Tower can be 15 cm taller in summer.🗼",
+            "A bolt of lightning is 5x hotter than the sun.⚡",
+            "Sharks predate dinosaurs.🦈",
+            "Octopuses have three hearts.🐙",
+            "The Sahara is the largest hot desert.🏜️",
+            "The Nile is the world's longest river.🏞️",
+            "Earth's core is hotter than the sun's surface.🌍🔥",
+            "A day on Venus is longer than its year. ✨",
+            "Butterflies taste with their feet. 🦋"
+        ]
+        self.current_fact_index = 0
+        super().__init__(parent, app_name="Fun Facts", icon="💡")
+        self.create_widgets()
+
+
+    def create_widgets(self):
+        main_frame = ttk.Frame(self, style="App.TFrame")
+        main_frame.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
+
+        ttk.Label(main_frame, text="Did You Know?", style="Header.TLabel").pack(pady=(0,20))
+
+        self.fact_label = ttk.Label(main_frame, text="", style="Fact.TLabel", wraplength=400, justify="center")
+        self.fact_label.pack(expand=True, fill=tk.BOTH, pady=20)
+
+        button_frame = ttk.Frame(main_frame, style="App.TFrame")
+        button_frame.pack(pady=20)
+
+        self.prev_button = ttk.Button(button_frame, text="⬅️ Prev", command=self.show_previous_fact, style="App.TButton")
+        self.prev_button.pack(side=tk.LEFT, padx=10)
+
+        self.next_button = ttk.Button(button_frame, text="Next ➡️", command=self.show_next_fact, style="Accent.TButton")
+        self.next_button.pack(side=tk.LEFT, padx=10)
+
+        self.fetch_online_button = ttk.Button(button_frame, text="✨ Get Online Fact", command=self.fetch_online_fact, style="App.TButton")
+        self.fetch_online_button.pack(side=tk.LEFT, padx=10)
+
+        # Create and pack the info section within main_frame (using pack)
+        info_frame = self._create_and_get_info_frame(main_frame) # Pass main_frame as parent
+        info_frame.pack(fill="x", padx=10, pady=10, side=tk.BOTTOM)
+
+
+        self.show_fact() # Display an initial fact (from the hardcoded list)
+
+    def show_fact(self):
+        """Displays the fact at the current index from the loaded facts_list."""
+        if self.facts_list:
+            self.fact_label.config(text=self.facts_list[self.current_fact_index])
+            self.prev_button.config(state=tk.NORMAL)
+            self.next_button.config(state=tk.NORMAL)
+        else:
+            self.fact_label.config(text="No facts loaded! Try getting an online fact.")
+            self.prev_button.config(state=tk.DISABLED)
+            self.next_button.config(state=tk.DISABLED)
+
+    def show_next_fact(self):
+        """Moves to the next fact in the loaded list."""
+        if not self.facts_list: return
+        self.current_fact_index = (self.current_fact_index + 1) % len(self.facts_list)
+        self.show_fact()
+
+    def show_previous_fact(self):
+        """Moves to the previous fact in the loaded list."""
+        if not self.facts_list: return
+        self.current_fact_index = (self.current_fact_index - 1 + len(self.facts_list)) % len(self.facts_list)
+        self.show_fact()
+
+    def fetch_online_fact(self):
+        """Fetches a single random fact from a public online API and displays it."""
+        # Disable buttons while fetching
+        self.fetch_online_button.config(state=tk.DISABLED)
+        self.prev_button.config(state=tk.DISABLED)
+        self.next_button.config(state=tk.DISABLED)
+        self.fact_label.config(text="Fetching online fact...") # Provide feedback
+
+        # Fetch fact from API
+        fact = fetch_random_fact_api()
+
+        # Replace the current facts list with just the new online fact for simplicity
+        self.facts_list = [fact]
+        self.current_fact_index = 0
+
+        # Update display and re-enable buttons
+        self.show_fact()
+        self.fetch_online_button.config(state=tk.NORMAL)
+
+
+    def get_app_info(self):
+         return "Fun facts can make learning enjoyable and spark curiosity about the world around us."
+
+
+class CalculatorApp(BaseAppFrame):
+    def __init__(self, parent):
+        self.current_expression = ""
+        super().__init__(parent, app_name="Calc", icon="🧮")
+        self.create_widgets()
+
+    def create_widgets(self):
+        main_frame = ttk.Frame(self, style="App.TFrame")
+        main_frame.pack(expand=True, fill=tk.BOTH, padx=10, pady=10) # Smaller padding for calculator
+
+        # Use the dynamically determined font family
+        self.display = ttk.Entry(main_frame, font=(current_font_family, 20, "bold"), style="Display.TEntry", justify="right")
+        self.display.grid(row=0, column=0, columnspan=4, padx=5, pady=(10,15), sticky="ew")
+        # Allow inserting only calculator characters from keyboard
+        self.display.bind("<Key>", self.handle_keyboard_input)
+
+
+        buttons_layout = [
+            ("7", 1, 0), ("8", 1, 1), ("9", 1, 2), ("/", 1, 3, "Operator.TButton"),
+            ("4", 2, 0), ("5", 2, 1), ("6", 2, 2), ("*", 2, 3, "Operator.TButton"),
+            ("1", 3, 0), ("2", 3, 1), ("3", 3, 2), ("-", 3, 3, "Operator.TButton"),
+            ("0", 4, 0), (".", 4, 1), ("=", 4, 2, "Accent.TButton"), ("+", 4, 3, "Operator.TButton"),
+            ("C", 5, 0, "Red.TButton", 2), ("√", 5, 2), ("x²", 5, 3) # Spanning C
+        ]
+
+        for i in range(4): main_frame.grid_columnconfigure(i, weight=1)
+        for i in range(1,6): main_frame.grid_rowconfigure(i, weight=1)
+
+
+        for btn_props in buttons_layout:
+            text = btn_props[0]
+            row = btn_props[1]
+            col = btn_props[2]
+            style = "Calc.TButton"
+            if len(btn_props) > 3: style = btn_props[3]
+
+            columnspan = 1
+            if len(btn_props) > 4: columnspan = btn_props[4]
+
+            action = lambda x=text: self.handle_button_click(x)
+            btn = ttk.Button(main_frame, text=text, style=style, command=action)
+            btn.grid(row=row, column=col, columnspan=columnspan, padx=2, pady=2, sticky="nsew")
+
+        # Create and grid the info section within main_frame
+        info_frame = self._create_and_get_info_frame(main_frame) # Pass main_frame as parent
+        info_frame.grid(row=6, column=0, columnspan=4, padx=10, pady=10, sticky="ew")
+
+
+    def handle_button_click(self, text):
+        if text == "=":
+            if self.current_expression:
+                try:
+                    import math # Ensure math is imported
+                    # Basic eval - Be cautious with eval for untrusted input!
+                    # Replace custom symbols for evaluation
+                    eval_expression = self.current_expression.replace("x²", "**2").replace("√", "math.sqrt(") + (")" if "√" in self.current_expression and self.current_expression[-1] != ')' else "") # Add closing parenthesis for sqrt
+
+                    result = eval(eval_expression)
+
+                    self.display.delete(0, tk.END)
+                    self.display.insert(tk.END, str(round(result, 8)))
+                    self.current_expression = str(round(result, 8))
+
+                except (SyntaxError, ValueError, TypeError, NameError, ZeroDivisionError) as e:
+                    self.display.delete(0, tk.END)
+                    self.display.insert(tk.END, "Error")
+                    self.current_expression = ""
+                    print(f"Calc Error: {e}")
+
+                except Exception as e:
+                    self.display.delete(0, tk.END)
+                    self.display.insert(tk.END, "Error")
+                    self.current_expression = ""
+                    print(f"Calc Unexpected Error: {e}")
+            else:
+                 self.display.delete(0, tk.END)
+                 self.display.insert(tk.END, "")
+                 self.current_expression = ""
+
+        elif text == "C":
+            self.clear_display()
+
+        elif text == "√":
+             if self.current_expression:
+                # Evaluate the current expression first if it's not just a number
+                try:
+                    import math
+                    num = eval(self.current_expression.replace("x²", "**2")) # Evaluate before sqrt
+                    if num < 0:
+                         raise ValueError("Cannot take square root of negative number")
+                    self.current_expression = f"math.sqrt({num})"
+                    self.display.delete(0, tk.END)
+                    self.display.insert(tk.END, self.current_expression)
+                except Exception as e:
+                     self.display.delete(0, tk.END)
+                     self.display.insert(tk.END, "Error")
+                     self.current_expression = ""
+                     print(f"Sqrt Prep Error: {e}")
+
+        elif text == "x²":
+             if self.current_expression:
+                # Evaluate the current expression first if it's not just a number
+                try:
+                    num = eval(self.current_expression.replace("x²", "**2").replace("√", "math.sqrt(")) # Evaluate before squaring
+                    self.current_expression = f"({num})**2"
+                    self.display.delete(0, tk.END)
+                    self.display.insert(tk.END, self.current_expression)
+                except Exception as e:
+                     self.display.delete(0, tk.END)
+                     self.display.insert(tk.END, "Error")
+                     self.current_expression = ""
+                     print(f"Square Prep Error: {e}")
+
+        else:
+            self.current_expression += text
+            self.display.delete(0, tk.END)
+            self.display.insert(tk.END, self.current_expression)
+
+    def handle_keyboard_input(self, event):
+        """Allows keyboard input to the calculator display."""
+        # Allow digits, operators, Backspace, Return, etc.
+        allowed_chars = "0123456789+-*/.()" # Standard calculator keys
+        special_keys = {"Return": "=", "BackSpace": "BackSpace", "Delete": "Delete", "Left": "Left", "Right": "Right"} # Map special keys to actions or names
+        calc_special_chars = {"r": "√", "s": "x²"} # Map keyboard characters to calculator symbols (e.g., 'r' for root, 's' for square)
+
+        # Handle special keys (like Enter, Backspace, Delete, Arrows)
+        if event.keysym in special_keys:
+             action = special_keys[event.keysym]
+             if action == "=":
+                  self.handle_button_click("=")
+             elif action == "BackSpace":
+                  # Handle backspace manually to update current_expression
+                  if self.current_expression:
+                       self.current_expression = self.current_expression[:-1]
+                       self.display.delete(0, tk.END)
+                       self.display.insert(tk.END, self.current_expression)
+             elif action == "Delete":
+                  self.clear_display()
+             # For Left/Right arrows, let the default Entry widget behavior handle cursor movement
+             elif action in ("Left", "Right"):
+                  pass # Let the event propagate for cursor movement
+             else:
+                  pass # Handle other potential special keys if needed
+
+             return "break" # Consume the event for handled keysyms
+
+        # Handle calculator specific characters from keyboard
+        elif event.char in calc_special_chars:
+             self.handle_button_click(calc_special_chars[event.char])
+             return "break" # Consume the event
+
+        # Handle standard allowed characters
+        elif event.char in allowed_chars:
+             # Append allowed characters
+             self.current_expression += event.char
+             self.display.delete(0, tk.END)
+             self.display.insert(tk.END, self.current_expression)
+             return "break" # Consume the event
+
+        else:
+            # Block all other keyboard input
+            return "break" # Stop the event
+
+
+    def clear_display(self):
+        self.display.delete(0, tk.END)
+        self.current_expression = ""
+
+    def get_app_info(self):
+        return "Calculators have evolved from mechanical devices to complex electronic chips, enabling fast and accurate computations."
+
+
+class WeatherApp(BaseAppFrame):
+    def __init__(self, parent):
+        super().__init__(parent, app_name="Weather", icon="🌦️")
+        self.create_widgets()
+
+    def create_widgets(self):
+        main_frame = ttk.Frame(self, style="App.TFrame")
+        main_frame.pack(expand=True, fill=tk.BOTH, padx=30, pady=30)
+
+
+        ttk.Label(main_frame, text="Weather Forecast", style="Header.TLabel").pack(pady=(0,20))
+
+        input_frame = ttk.Frame(main_frame, style="App.TFrame")
+        input_frame.pack(pady=10)
+
+        ttk.Label(input_frame, text="Enter City or Zip Code:", style="SecondaryText.TLabel").pack(side=tk.LEFT, padx=5)
+        self.location_entry = ttk.Entry(input_frame, style="App.TEntry", width=25)
+        self.location_entry.pack(side=tk.LEFT, padx=5)
+        self.location_entry.bind("<Return>", lambda event: self.get_weather()) # Bind Return key
+
+        get_weather_button = ttk.Button(input_frame, text="Get Weather", command=self.get_weather, style="Accent.TButton")
+        get_weather_button.pack(side=tk.LEFT, padx=5)
+
+        self.weather_info_frame = ttk.Frame(main_frame, style="App.TFrame")
+        self.weather_info_frame.pack(expand=True, fill=tk.BOTH, pady=20)
+
+        self.location_label = ttk.Label(self.weather_info_frame, text="", style="Result.TLabel")
+        self.location_label.pack(pady=5)
+
+        self.temperature_label = ttk.Label(self.weather_info_frame, text="", style="Fact.TLabel")
+        self.temperature_label.pack(pady=5)
+
+        self.description_label = ttk.Label(self.weather_info_frame, text="", style="SecondaryText.TLabel")
+        self.description_label.pack(pady=5)
+
+        self.details_label = ttk.Label(self.weather_info_frame, text="", style="SecondaryText.TLabel")
+        self.details_label.pack(pady=5)
+
+        # Create and pack the info section within main_frame (using pack)
+        info_frame = self._create_and_get_info_frame(main_frame) # Pass main_frame as parent
+        info_frame.pack(fill="x", padx=10, pady=10, side=tk.BOTTOM)
+
+
+    def get_weather(self):
+        location = self.location_entry.get().strip()
+        if not location:
+            messagebox.showwarning("Warning", "Please enter a city or zip code.", parent=self)
+            return
+
+        self.location_label.config(text="Fetching weather...") # Feedback
+        self.temperature_label.config(text="")
+        self.description_label.config(text="")
+        self.details_label.config(text="")
+
+        # Fetch weather from API
+        weather_data = fetch_weather_api(location)
+
+        if "error" in weather_data:
+            self.location_label.config(text="", style="Red.TLabel")
+            self.temperature_label.config(text=weather_data["error"], style="Red.TLabel")
+            self.description_label.config(text="")
+            self.details_label.config(text="")
+        else:
+            self.location_label.config(text=f"Weather in {weather_data['location']}", style="Result.TLabel")
+            self.temperature_label.config(text=f"{weather_data['temperature_c']}°C / {weather_data['temperature_f']}°F", style="Fact.TLabel")
+            self.description_label.config(text=f"Description: {weather_data['description']}", style="SecondaryText.TLabel")
+            self.details_label.config(text=f"Humidity: {weather_data['humidity']}% | Wind: {round(weather_data['wind_speed_mps'] * 3.6, 1)} km/h", style="SecondaryText.TLabel") # Convert m/s to km/h
+
+
+    def clear_weather_display(self):
+        self.location_label.config(text="")
+        self.temperature_label.config(text="")
+        self.description_label.config(text="")
+        self.details_label.config(text="")
+
+    def get_app_info(self):
+        return "Understanding weather patterns is crucial for agriculture, transportation, and daily life. Meteorologists use complex models to forecast conditions."
+
+
+class QuizGameApp(BaseAppFrame):
+    def __init__(self, parent):
+        super().__init__(parent, app_name="Quiz", icon="❓")
+        # Hardcoded questions as a fallback
+        self.hardcoded_questions = [
+            {"question": "Fallback Q1: What color is the sky on a clear day?", "options": ["Red", "Green", "Blue", "Yellow"], "answer": "Blue"},
+            {"question": "Fallback Q2: Is the Earth flat? (True/False)", "options": ["True", "False"], "answer": "False"},
+            {"question": "Fallback Q3: What is the capital of Canada?", "options": ["Toronto", "Vancouver", "Ottawa", "Montreal"], "answer": "Ottawa"},
+        ]
+        self.questions = [] # List to store questions (will be populated from online or fallback)
+        self.current_question_index = 0
+        self.score = 0
+        self.create_widgets()
+
+    def create_widgets(self):
+        main_frame = ttk.Frame(self, style="App.TFrame")
+        main_frame.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
+        main_frame.grid_columnconfigure(0, weight=1) # Main content column
+        main_frame.grid_rowconfigure(1, weight=1) # Quiz content row
+
+
+        ttk.Label(main_frame, text="Quiz Game", style="Header.TLabel").grid(row=0, column=0, pady=(0,20), sticky="w")
+
+        # Frame for question and options
+        quiz_content_frame = ttk.Frame(main_frame, style="App.TFrame")
+        quiz_content_frame.grid(row=1, column=0, sticky="nsew", pady=10)
+        quiz_content_frame.grid_columnconfigure(0, weight=1)
+        quiz_content_frame.grid_rowconfigure(1, weight=1)
+
+
+        self.question_label = ttk.Label(quiz_content_frame, text="Select a quiz source below.", style="Fact.TLabel", wraplength=500, justify="center")
+        self.question_label.grid(row=0, column=0, sticky="ew", pady=10)
+
+        self.options_frame = ttk.Frame(quiz_content_frame, style="App.TFrame")
+        self.options_frame.grid(row=1, column=0, sticky="nsew", pady=10)
+        self.options_frame.grid_columnconfigure(0, weight=1) # Center radio buttons
+
+
+        self.answer_var = tk.StringVar()
+        self.radio_buttons = [] # To hold Radiobutton widgets
+
+        self.feedback_label = ttk.Label(main_frame, text="", style="SecondaryText.TLabel")
+        self.feedback_label.grid(row=2, column=0, pady=10, sticky="ew")
+
+        self.score_label = ttk.Label(main_frame, text="Score: 0", style="Result.TLabel", anchor="e")
+        self.score_label.grid(row=3, column=0, pady=10, sticky="ew")
+
+
+        button_frame = ttk.Frame(main_frame, style="App.TFrame")
+        button_frame.grid(row=4, column=0, pady=10, sticky="ew")
+
+        self.submit_button = ttk.Button(button_frame, text="Submit Answer", command=self.check_answer, style="Accent.TButton", state=tk.DISABLED)
+        self.submit_button.pack(side=tk.LEFT, expand=True, padx=5)
+
+        self.next_button = ttk.Button(button_frame, text="Next Question", command=self.next_question, style="App.TButton", state=tk.DISABLED)
+        self.next_button.pack(side=tk.LEFT, expand=True, padx=5)
+
+        # --- Quiz Source Selection ---
+        source_frame = ttk.LabelFrame(main_frame, text="Select Quiz Source", style="App.TLabelframe")
+        source_frame.grid(row=6, column=0, pady=20, sticky="ew")
+        source_frame.grid_columnconfigure(0, weight=1) # Center buttons in source frame
+        source_frame.grid_columnconfigure(1, weight=1)
+
+
+        ttk.Button(source_frame, text="Start Offline Quiz", command=self.start_offline_quiz, style="App.TButton").grid(row=0, column=0, padx=10, pady=10, sticky="ew")
+        ttk.Button(source_frame, text="Start Online Quiz (5 Qs)", command=lambda: self.start_online_quiz(amount=5), style="Accent.TButton").grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+
+        # Create and grid the info section within main_frame
+        info_frame = self._create_and_get_info_frame(main_frame) # Pass main_frame as parent
+        info_frame.grid(row=5, column=0, padx=10, pady=10, sticky="ew") # Grid info_frame within main_frame
+
+
+    def clear_options(self):
+        """Destroys existing radio buttons."""
+        for rb in self.radio_buttons:
+            rb.destroy()
+        self.radio_buttons.clear()
+        self.answer_var.set("")
+
+    def display_question(self):
+        """Displays the current question and its options."""
+        self.clear_options() # Clear previous options
+
+        if self.current_question_index < len(self.questions):
+            question_data = self.questions[self.current_question_index]
+            self.question_label.config(text=question_data["question"])
+
+            # Create radio buttons for current question options
+            for option in question_data["options"]:
+                rb = ttk.Radiobutton(self.options_frame, text=option, variable=self.answer_var, value=option, style="App.TRadiobutton")
+                rb.pack(anchor="center", pady=2)
+                self.radio_buttons.append(rb)
+
+            self.feedback_label.config(text="")
+            self.submit_button.config(state=tk.NORMAL)
+            self.next_button.config(state=tk.DISABLED)
+        else:
+            # Quiz finished
+            self.question_label.config(text="Quiz Finished!")
+            self.feedback_label.config(text=f"Final Score: {self.score}/{len(self.questions)}")
+            self.clear_options() # Remove final options
+            self.submit_button.config(state=tk.DISABLED)
+            self.next_button.config(text="Restart Quiz", state=tk.NORMAL, command=self.restart_quiz) # Next becomes Restart
+
+
+    def check_answer(self):
+        selected_answer = self.answer_var.get()
+        if not selected_answer:
+            messagebox.showwarning("Warning", "Please select an answer.", parent=self)
+            return
+
+        correct_answer = self.questions[self.current_question_index]["answer"]
+
+        if selected_answer == correct_answer:
+            self.feedback_label.config(text="Correct!", foreground=COLOR_SUCCESS)
+            self.score += 1
+        else:
+            self.feedback_label.config(text=f"Wrong! The correct answer was: {correct_answer}", foreground=COLOR_ERROR)
+
+        self.score_label.config(text=f"Score: {self.score}")
+        self.submit_button.config(state=tk.DISABLED)
+        self.next_button.config(state=tk.NORMAL)
+
+        # Disable radio buttons after answering
+        for rb in self.radio_buttons:
+            rb.config(state=tk.DISABLED)
+
+
+    def next_question(self):
+        self.current_question_index += 1
+        self.display_question()
+
+    def start_offline_quiz(self):
+        self.questions = self.hardcoded_questions.copy()
+        random.shuffle(self.questions)
+        self.current_question_index = 0
+        self.score = 0
+        self.score_label.config(text="Score: 0")
+        self.next_button.config(text="Next Question", command=self.next_question)
+        self.display_question()
+        # Display first question immediately if list is not empty
+        if self.questions:
+             self.question_label.config(text=self.questions[0]["question"])
+        else:
+             self.question_label.config(text="No offline questions available.")
+
+
+    def start_online_quiz(self, amount=5):
+        self.question_label.config(text="Fetching online questions...")
+        self.clear_options()
+        self.submit_button.config(state=tk.DISABLED)
+        self.next_button.config(state=tk.DISABLED)
+        self.score_label.config(text="Score: 0")
+        self.feedback_label.config(text="")
+
+        # Fetch questions from API
+        fetched_questions = fetch_quiz_questions_api(amount=amount)
+
+        if fetched_questions and "error" not in fetched_questions[0]:
+            self.questions = fetched_questions
+            self.current_question_index = 0
+            self.score = 0
+            self.next_button.config(text="Next Question", command=self.next_question)
+            self.display_question() # Display the first fetched question
+        elif fetched_questions and "error" in fetched_questions[0]:
+             self.question_label.config(text=f"Error: {fetched_questions[0]['error']}\nTry Offline Quiz.")
+             self.questions = []
+        else:
+            self.question_label.config(text="Failed to load online quiz questions. Try offline.")
+            self.questions = []
+
+
+    def restart_quiz(self):
+        self.current_question_index = 0
+        self.score = 0
+        self.score_label.config(text="Score: 0")
+        self.next_button.config(text="Next Question", command=self.next_question)
+        self.display_question()
+
+
+    def get_app_info(self):
+         return "Quizzes are a fun way to test knowledge and learn new facts across various subjects."
+
+
+class StockMarketApp(BaseAppFrame):
+    def __init__(self, parent):
+        super().__init__(parent, app_name="Stocks", icon="📈")
+        self.create_widgets()
+
+    def create_widgets(self):
+        main_frame = ttk.Frame(self, style="App.TFrame")
+        main_frame.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
+
+        ttk.Label(main_frame, text="Stock Market Data (API)", style="Header.TLabel").pack(pady=(0,20))
+
+        input_frame = ttk.Frame(main_frame, style="App.TFrame")
+        input_frame.pack(pady=10)
+
+        ttk.Label(input_frame, text="Enter Stock Ticker:", style="SecondaryText.TLabel").pack(side=tk.LEFT, padx=5)
+        self.ticker_entry = ttk.Entry(input_frame, style="App.TEntry", width=15)
+        self.ticker_entry.pack(side=tk.LEFT, padx=5)
+        self.ticker_entry.bind("<Return>", lambda event: self.get_stock_data()) # Bind Return key
+
+        get_data_button = ttk.Button(input_frame, text="Get Data", command=self.get_stock_data, style="Accent.TButton")
+        get_data_button.pack(side=tk.LEFT, padx=5)
+
+        self.stock_info_frame = ttk.Frame(main_frame, style="App.TFrame")
+        self.stock_info_frame.pack(expand=True, fill=tk.BOTH, pady=20)
+
+        self.symbol_label = ttk.Label(self.stock_info_frame, text="", style="Result.TLabel")
+        self.symbol_label.pack(pady=5)
+
+        self.price_label = ttk.Label(self.stock_info_frame, text="", style="Fact.TLabel")
+        self.price_label.pack(pady=5)
+
+        self.details_label = ttk.Label(self.stock_info_frame, text="", style="SecondaryText.TLabel")
+        self.details_label.pack(pady=5)
+
+        self.trend_label = ttk.Label(self.stock_info_frame, text="", style="SecondaryText.TLabel")
+        self.trend_label.pack(pady=5)
+
+        # Placeholder for a simple "prediction" or trend visualization
+        self.prediction_label = ttk.Label(self.stock_info_frame, text="Simple Trend:", style="SecondaryText.TLabel")
+        self.prediction_label.pack(pady=5)
+
+
+        # Create and pack the info section within main_frame (using pack)
+        info_frame = self._create_and_get_info_frame(main_frame) # Pass main_frame as parent
+        info_frame.pack(fill="x", padx=10, pady=10, side=tk.BOTTOM)
+
+
+    def get_stock_data(self):
+        ticker = self.ticker_entry.get().strip().upper()
+        if not ticker:
+            messagebox.showwarning("Warning", "Please enter a stock ticker symbol.", parent=self)
+            return
+
+        self.symbol_label.config(text="Fetching data...") # Feedback
+        self.price_label.config(text="")
+        self.details_label.config(text="")
+        self.trend_label.config(text="")
+        self.prediction_label.config(text="Simple Trend:")
+
+
+        # Fetch stock data from API
+        stock_data = fetch_stock_data_api(ticker)
+
+        if "error" in stock_data:
+            self.symbol_label.config(text="", style="Red.TLabel")
+            self.price_label.config(text=stock_data["error"], style="Red.TLabel")
+            self.details_label.config(text="")
+            self.trend_label.config(text="")
+            self.prediction_label.config(text="Simple Trend:")
+        else:
+            self.symbol_label.config(text=f"Stock: {stock_data['symbol']} ({stock_data['latest_date']})", style="Result.TLabel")
+            self.price_label.config(text=f"Close Price: ${stock_data['close']:.2f}", style="Fact.TLabel")
+            self.details_label.config(text=f"Open: ${stock_data['open']:.2f} | High: ${stock_data['high']:.2f} | Low: ${stock_data['low']:.2f} | Volume: {stock_data['volume']:,}", style="SecondaryText.TLabel")
+            self.trend_label.config(text=f"Recent 5-Day Trend: {stock_data['trend_5day']}", style="SecondaryText.TLabel")
+            # Simple illustrative "prediction" based on trend
+            if stock_data['trend_5day'] == 'Up':
+                 self.prediction_label.config(text="Simple Trend: Likely continues upwards (illustrative)", foreground=COLOR_SUCCESS) # Use success color
+            elif stock_data['trend_5day'] == 'Down':
+                 self.prediction_label.config(text="Simple Trend: Likely continues downwards (illustrative)", foreground=COLOR_ERROR) # Use error color
+            else:
+                 self.prediction_label.config(text="Simple Trend: Stable (illustrative)", foreground=COLOR_TEXT_SECONDARY)
+
+
+    def get_app_info(self):
+        return "Stock markets are where shares of publicly traded companies are bought and sold. Analyzing trends and data is key for investors."
+
+
+class CharacterCustomizerApp(BaseAppFrame):
+    def __init__(self, parent):
+        super().__init__(parent, app_name="Avatar", icon="🎨")
+        self.create_widgets()
+        self.update_character_display() # Initial display update
+
+    def create_widgets(self):
+        main_frame = ttk.Frame(self, style="App.TFrame")
+        main_frame.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
+        main_frame.grid_columnconfigure(0, weight=1) # Customization options column
+        main_frame.grid_columnconfigure(1, weight=2) # Character display column
+        main_frame.grid_rowconfigure(0, weight=1) # Make the display area expandable (was row 1)
+
+
+        ttk.Label(main_frame, text="Character Customizer", style="Header.TLabel").grid(row=0, column=0, columnspan=2, pady=(0,20), sticky="w")
+
+        # --- Customization Options Frame (with Scrollbar) ---
+        options_labelframe = ttk.LabelFrame(main_frame, text="Options", style="App.TLabelframe")
+        options_labelframe.grid(row=1, column=0, padx=10, pady=10, sticky="nsew") # Adjusted row
+
+        # Canvas to make the options frame scrollable
+        options_canvas = tk.Canvas(options_labelframe, bg=COLOR_PRIMARY_BG, highlightthickness=0)
+        options_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        options_scrollbar = ttk.Scrollbar(options_labelframe, orient=tk.VERTICAL, command=options_canvas.yview, style="App.Vertical.TScrollbar")
+        options_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        options_canvas.config(yscrollcommand=options_scrollbar.set)
+
+        # Frame inside the canvas to hold the actual options widgets
+        options_inner_frame = ttk.Frame(options_canvas, style="App.TFrame")
+        # Attach the inner frame to the canvas's window
+        options_inner_frame_id = options_canvas.create_window((0, 0), window=options_inner_frame, anchor="nw")
+
+        # Update scrollregion when inner frame size changes
+        options_inner_frame.bind("<Configure>", lambda e: options_canvas.configure(scrollregion=options_canvas.bbox("all")))
+        # Update inner frame width when canvas width changes (prevents horizontal scrolling unless needed)
+        options_canvas.bind("<Configure>", lambda e: options_canvas.itemconfig(options_inner_frame_id, width=e.width))
+
+
+        # Example Option: Hair Color
+        ttk.Label(options_inner_frame, text="Hair Color:", style="SecondaryText.TLabel").pack(pady=5, padx=10, anchor="w")
+        self.hair_color_var = tk.StringVar(value="Brown")
+        hair_colors = ["Black", "Brown", "Blonde", "Red", "Blue"]
+        self.hair_color_combo = ttk.Combobox(options_inner_frame, textvariable=self.hair_color_var, values=hair_colors, state="readonly", style="App.TCombobox", width=15)
+        self.hair_color_combo.pack(pady=5, padx=10, fill="x")
+        self.hair_color_combo.bind("<<ComboboxSelected>>", lambda event: self.update_character_display())
+
+
+        # Example Option: Eye Color
+        ttk.Label(options_inner_frame, text="Eye Color:", style="SecondaryText.TLabel").pack(pady=5, padx=10, anchor="w")
+        self.eye_color_var = tk.StringVar(value="Blue")
+        eye_colors = ["Blue", "Brown", "Green", "Hazel"]
+        self.eye_color_combo = ttk.Combobox(options_inner_frame, textvariable=self.eye_color_var, values=eye_colors, state="readonly", style="App.TCombobox", width=15)
+        self.eye_color_combo.pack(pady=5, padx=10, fill="x")
+        self.eye_color_combo.bind("<<ComboboxSelected>>", lambda event: self.update_character_display())
+
+
+        # Example Option: Clothing Style
+        ttk.Label(options_inner_frame, text="Clothing Style:", style="SecondaryText.TLabel").pack(pady=5, padx=10, anchor="w")
+        self.clothing_var = tk.StringVar(value="Casual")
+        clothing_styles = ["Casual", "Formal", "Sporty"]
+        self.clothing_combo = ttk.Combobox(options_inner_frame, textvariable=self.clothing_var, values=clothing_styles, state="readonly", style="App.TCombobox", width=15)
+        self.clothing_combo.pack(pady=5, padx=10, fill="x")
+        self.clothing_combo.bind("<<ComboboxSelected>>", lambda event: self.update_character_display())
+
+        # Add more customization options here following the pattern...
+        # For instance, Hair Style, Skin Tone, Accessories, etc.
+
+
+        # --- Character Display Frame ---
+        display_frame = ttk.Frame(main_frame, style="App.TFrame")
+        display_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        display_frame.grid_rowconfigure(0, weight=1)
+        display_frame.grid_columnconfigure(0, weight=1)
+
+
+        # Placeholder for Character Image/Canvas
+        # In a real app, this would likely be a Canvas or a Label holding an image
+        # generated or layered based on the selections.
+        self.character_display_label = ttk.Label(display_frame, text="Character Placeholder\n(Needs Image Assets)", style="Fact.TLabel", anchor="center")
+        self.character_display_label.grid(row=0, column=0, sticky="nsew")
+        self.character_display_label.config(wraplength=300) # Example wrap
+
+        self.selected_options_label = ttk.Label(display_frame, text="", style="SecondaryText.TLabel", anchor="center", justify="center")
+        self.selected_options_label.grid(row=1, column=0, sticky="ew")
+
+        # Create and grid the info section within main_frame
+        info_frame = self._create_and_get_info_frame(main_frame) # Pass main_frame as parent
+        info_frame.grid(row=2, column=0, columnspan=2, padx=10, pady=10, sticky="ew")
+
+
+    def update_character_display(self):
+        """Updates the display based on selected options (simulated)."""
+        hair = self.hair_color_var.get()
+        eyes = self.eye_color_var.get()
+        clothing = self.clothing_var.get()
+
+        # --- Placeholder for Image Generation/Update ---
+        # In a real app, you would load and layer images here based on selections.
+        # Requires PIL and image files (e.g., in an 'assets' folder).
+        # You would need base images and layers for each option (hair, eyes, clothing).
+        # Example (requires PIL and os, and image assets):
+        # try:
+        #     base_img_path = "assets/character/base.png" # Example path
+        #     if not os.path.exists(base_img_path):
+        #          raise FileNotFoundError("Base character image not found.")
+        #
+        #     base_img = Image.open(base_img_path).convert("RGBA")
+        #     current_img = base_img # Start with the base
+        #
+        #     # Layer hair (assuming hair files are e.g., assets/character/hair/brown.png)
+        #     hair_path = f"assets/character/hair/{hair.lower()}_hair.png"
+        #     if os.path.exists(hair_path):
+        #         hair_img = Image.open(hair_path).convert("RGBA")
+        #         current_img = Image.alpha_composite(current_img, hair_img)
+        #
+        #      # Layer eyes
+        #      eyes_path = f"assets/character/eyes/{eyes.lower()}_eyes.png"
+        #      if os.path.exists(eyes_path):
+        #           eyes_img = Image.open(eyes_path).convert("RGBA")
+        #           current_img = Image.alpha_composite(current_img, eyes_img)
+        #
+        #      # Layer clothing
+        #      clothing_path = f"assets/character/clothing/{clothing.lower()}_clothing.png"
+        #      if os.path.exists(clothing_path):
+        #           clothing_img = Image.open(clothing_path).convert("RGBA")
+        #           current_img = Image.alpha_composite(current_img, clothing_img)
+        #
+        #     # Resize the final image to fit the display area if needed
+        #     # Get current size of the label or a containing frame
+        #     # max_width = self.character_display_label.winfo_width() # Need to bind to configure or use after_idle
+        #     # max_height = self.character_display_label.winfo_height()
+        #     # resized_img = current_img.resize(...) # Implement resize logic similar to Image Viewer
+        #
+        #     photo = ImageTk.PhotoImage(current_img) # Or resized_img
+        #     self.character_display_label.config(image=photo, text="")
+        #     self.character_display_label.image = photo # Keep a reference!
+        #
+        # except FileNotFoundError as e:
+        #     print(f"Warning: {e} - Character image assets missing or incomplete.")
+        #     self.character_display_label.config(image="", text=f"Character image assets missing or incomplete: {e}", style="Red.TLabel")
+        #     # Clear old image reference if any
+        #     if hasattr(self.character_display_label, 'image'):
+        #          del self.character_display_label.image
+        #
+        # except Exception as e:
+        #     print(f"Error loading/processing character image: {e}")
+        #     self.character_display_label.config(image="", text=f"Error displaying character: {e}", style="Red.TLabel")
+        #      # Clear old image reference if any
+        #     if hasattr(self.character_display_label, 'image'):
+        #          del self.character_display_label.image
+        #
+        # --- End Placeholder ---
+
+
+        # --- Simulated Display Update ---
+        self.character_display_label.config(image="", text=f"Character with:\n{hair} Hair\n{eyes} Eyes\n{clothing} Clothing")
+        self.selected_options_label.config(text=f"Options Selected: {hair}, {eyes}, {clothing}")
+        # --- End Simulated Update ---
+
+    def get_app_info(self):
+         return "Character customization in games and apps allows users to create unique representations of themselves or imaginary figures."
+
+
+class ImageViewerApp(BaseAppFrame):
+    def __init__(self, parent):
+        super().__init__(parent, app_name="Images", icon="🖼️")
+        self.current_image = None # Stores the original PIL Image object
+        self.photo_image = None # Stores the Tkinter PhotoImage object
+        self.image_path = None # Stores the path of the currently loaded image
+        self.create_widgets()
+
+    def create_widgets(self):
+        main_frame = ttk.Frame(self, style="App.TFrame")
+        main_frame.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
+        main_frame.grid_columnconfigure(0, weight=1) # Image display column
+        main_frame.grid_rowconfigure(0, weight=1) # Image display row
+
+
+        # Frame for image display (can have a border or background)
+        image_display_frame = ttk.Frame(main_frame, style="App.TFrame", borderwidth=1, relief="solid")
+        image_display_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        image_display_frame.grid_columnconfigure(0, weight=1)
+        image_display_frame.grid_rowconfigure(0, weight=1)
+
+
+        # Label to display the image
+        self.image_label = ttk.Label(image_display_frame, text="No Image Loaded", style="Fact.TLabel", anchor="center")
+        self.image_label.grid(row=0, column=0, sticky="nsew")
+        self.image_label.config(wraplength=600) # Example wrap length
+
+        # Bind configure event to handle resizing
+        image_display_frame.bind("<Configure>", self.on_resize)
+
+
+        button_frame = ttk.Frame(main_frame, style="App.TFrame")
+        button_frame.grid(row=1, column=0, pady=10)
+
+        open_button = ttk.Button(button_frame, text="Open Image", command=self.open_image, style="Accent.TButton")
+        open_button.pack(side=tk.LEFT, padx=5)
+
+        # Add navigation buttons (optional)
+        # self.prev_button = ttk.Button(button_frame, text="Prev", command=self.prev_image, style="App.TButton", state=tk.DISABLED)
+        # self.prev_button.pack(side=tk.LEFT, padx=5)
+        # self.next_button = ttk.Button(button_frame, text="Next", command=self.next_image, style="App.TButton", state=tk.DISABLED)
+        # self.next_button.pack(side=tk.LEFT, padx=5)
+
+        # Create and grid the info section within main_frame
+        info_frame = self._create_and_get_info_frame(main_frame) # Pass main_frame as parent
+        info_frame.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
+
+
+    def open_image(self):
+        file_path = filedialog.askopenfilename(
+            initialdir="./", # Starting directory
+            title="Select Image File",
+            filetypes=(("Image Files", "*.png *.jpg *.jpeg *.gif *.bmp"), ("All files", "*.*"))
+        )
+        if file_path:
+            try:
+                # Open the image using Pillow (PIL)
+                img = Image.open(file_path)
+                self.current_image = img # Store the original PIL Image object
+                self.image_path = file_path # Store the path
+                self.display_image(self.current_image) # Display the image (will handle resizing)
+
+            except FileNotFoundError:
+                 self.image_label.config(image="", text="Error: File not found.", style="Red.TLabel")
+                 self.photo_image = None
+                 self.current_image = None
+                 self.image_path = None
+
+            except Exception as e:
+                self.image_label.config(image="", text=f"Error loading image: {e}", style="Red.TLabel")
+                self.photo_image = None
+                self.current_image = None
+                self.image_path = None
+                print(f"Image loading error: {e}")
+
+
+    def display_image(self, img):
+         """Resizes and displays a PIL Image object in the image_label."""
+         if img is None:
+              self.image_label.config(image="", text="No Image Loaded")
+              self.photo_image = None
+              return
+
+         # Get current size of the parent frame or a predefined max size
+         # Use the size of the image_label's parent frame to constrain the image
+         parent_frame = self.image_label.master
+         max_width = parent_frame.winfo_width() - 20 # Subtract some padding/border
+         max_height = parent_frame.winfo_height() - 20
+
+         # Use a default size if the widget hasn't been fully rendered yet
+         if max_width <= 1 or max_height <= 1:
+              max_width = 800 # Default
+              max_height = 500 # Default
+
+
+         img_width, img_height = img.size
+
+         # Calculate the best fit size while maintaining aspect ratio
+         if img_width > max_width or img_height > max_height:
+             ratio = min(max_width / img_width, max_height / img_height)
+             new_width = int(img_width * ratio)
+             new_height = int(img_height * ratio)
+         else:
+             # Image is smaller than the display area, show it at original size
+             new_width = img_width
+             new_height = img_height
+
+         # Ensure new dimensions are positive
+         if new_width <= 0 or new_height <= 0:
+              new_width = 100 # Fallback size if calculation fails
+              new_height = int(new_width * img_height / img_width)
+              if new_height <= 0: new_height = 100
+
+
+         try:
+            # Use LANCZOS for good quality resize
+            resized_img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+            # Convert the Pillow image to a Tkinter PhotoImage
+            self.photo_image = ImageTk.PhotoImage(resized_img)
+
+            # Display the image in the label
+            self.image_label.config(image=self.photo_image, text="") # Set image and clear text
+            self.image_label.image = self.photo_image # Keep a reference!
+
+         except Exception as e:
+             self.image_label.config(image="", text=f"Error displaying image: {e}", style="Red.TLabel")
+             self.photo_image = None
+             print(f"Image display error: {e}")
+
+
+    def on_resize(self, event):
+        """Handles resizing of the image display frame."""
+        # Only attempt to redisplay if an image is currently loaded
+        if self.current_image:
+             # Use self.current_image (the original PIL Image) for resizing
+             # Schedule the display update to happen after the event processing is complete
+             # This prevents issues with widget size not being fully updated during the event
+             self.after_idle(lambda: self.display_image(self.current_image))
+
+
+    def get_app_info(self):
+         return "Image viewers are essential tools for browsing and managing digital photographs and graphics."
+
+
+class TranslatorApp(BaseAppFrame):
+    def __init__(self, parent):
+        super().__init__(parent, app_name="Translate", icon="🌐")
+        self.create_widgets()
+
+    def create_widgets(self):
+        main_frame = ttk.Frame(self, style="App.TFrame")
+        main_frame.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
+        main_frame.grid_columnconfigure(0, weight=1) # Input column
+        main_frame.grid_columnconfigure(1, weight=1) # Output column
+        main_frame.grid_rowconfigure(1, weight=1) # Text area row
+
+
+        ttk.Label(main_frame, text="Language Translator", style="Header.TLabel").grid(row=0, column=0, columnspan=2, pady=(0,20), sticky="w")
+
+        # --- Language Selection ---
+        lang_frame = ttk.Frame(main_frame, style="App.TFrame")
+        lang_frame.grid(row=1, column=0, columnspan=2, pady=10) # Centered horizontally
+
+        ttk.Label(lang_frame, text="Source:", style="SecondaryText.TLabel").grid(row=0, column=0, padx=5, sticky="w")
+        self.source_lang_var = tk.StringVar(value="English")
+        # Use a subset of common languages for simulation
+        languages = ["English", "Spanish", "French", "German", "Chinese", "Japanese", "Simlish"] # Added Simlish for fun
+        self.source_lang_combo = ttk.Combobox(lang_frame, textvariable=self.source_lang_var, values=languages, state="readonly", style="App.TCombobox", width=12)
+        self.source_lang_combo.grid(row=0, column=1, padx=5, sticky="ew")
+
+        # Swap Languages Button
+        swap_button = ttk.Button(lang_frame, text="↔️", command=self.swap_languages, style="App.TButton", width=3)
+        swap_button.grid(row=0, column=2, padx=5)
+
+
+        ttk.Label(lang_frame, text="Target:", style="SecondaryText.TLabel").grid(row=0, column=3, padx=5, sticky="w")
+        self.target_lang_var = tk.StringVar(value="Spanish")
+        self.target_lang_combo = ttk.Combobox(lang_frame, textvariable=self.target_lang_var, values=languages, state="readonly", style="App.TCombobox", width=12)
+        self.target_lang_combo.grid(row=0, column=4, padx=5, sticky="ew")
+
+        lang_frame.grid_columnconfigure(1, weight=1)
+        lang_frame.grid_columnconfigure(4, weight=1)
+
+
+        # --- Text Input/Output ---
+        text_frame = ttk.Frame(main_frame, style="App.TFrame")
+        text_frame.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=10) # Adjusted row
+        text_frame.grid_columnconfigure(0, weight=1) # Input Text column
+        text_frame.grid_columnconfigure(1, weight=1) # Output Text column
+        text_frame.grid_rowconfigure(1, weight=1) # Text areas row
+
+
+        ttk.Label(text_frame, text="Input Text:", style="SecondaryText.TLabel").grid(row=0, column=0, sticky="w", padx=5, pady=(0,5))
+        self.input_text = tk.Text(text_frame, height=10, width=40, bg=COLOR_WIDGET_BG, fg=COLOR_TEXT_PRIMARY, font=FONT_NORMAL, borderwidth=1, relief="flat", insertbackground=COLOR_TEXT_PRIMARY, highlightthickness=1, highlightbackground=COLOR_BORDER, highlightcolor=COLOR_ACCENT)
+        self.input_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+
+
+        ttk.Label(text_frame, text="Translated Text:", style="SecondaryText.TLabel").grid(row=0, column=1, sticky="w", padx=5, pady=(0,5))
+        self.output_text = tk.Text(text_frame, height=10, width=40, bg=COLOR_WIDGET_BG, fg=COLOR_TEXT_PRIMARY, font=FONT_NORMAL, borderwidth=1, relief="flat", state=tk.DISABLED, insertbackground=COLOR_TEXT_PRIMARY, highlightthickness=1, highlightbackground=COLOR_BORDER, highlightcolor=COLOR_ACCENT)
+        self.output_text.grid(row=1, column=1, sticky="nsew", padx=5, pady=5)
+
+
+        # --- Translate Button ---
+        translate_button = ttk.Button(main_frame, text="Translate", command=self.translate_text, style="Accent.TButton")
+        translate_button.grid(row=3, column=0, columnspan=2, pady=10) # Adjusted row, center
+
+        # Create and grid the info section within main_frame
+        info_frame = self._create_and_get_info_frame(main_frame) # Pass main_frame as parent
+        info_frame.grid(row=4, column=0, columnspan=2, padx=10, pady=10, sticky="ew")
+
+
+    def swap_languages(self):
+        """Swaps the source and target languages."""
+        source = self.source_lang_var.get()
+        target = self.target_lang_var.get()
+        self.source_lang_var.set(target)
+        self.target_lang_var.set(source)
+        # Optionally trigger translation of existing text after swap
+        # self.translate_text()
+
+
+    def translate_text(self):
+        source_lang = self.source_lang_var.get()
+        target_lang = self.target_lang_var.get()
+        input_text = self.input_text.get("1.0", tk.END).strip()
+
+        if not input_text:
+            messagebox.showwarning("Warning", "Please enter text to translate.", parent=self)
+            self.output_text.config(state=tk.NORMAL)
+            self.output_text.delete("1.0", tk.END)
+            self.output_text.config(state=tk.DISABLED)
+            return
+
+        # Get language codes for the API
+        source_code = get_lang_code(source_lang)
+        target_code = get_lang_code(target_lang)
+
+        # Call the translation API
+        translated_text = translate_text_api(input_text, source_code, target_code)
+
+        self.output_text.config(state=tk.NORMAL)
+        self.output_text.delete("1.0", tk.END)
+        self.output_text.insert(tk.END, translated_text)
+        self.output_text.config(state=tk.DISABLED)
+
+    def get_app_info(self):
+         return "Translation tools bridge communication gaps between different languages and cultures around the world."
+
+
+# --- Main Application Class ---
+class MultifunctionalApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        
-        # Window setup
-        self.title("Fact Finder Assistant")
-        self.geometry("1200x800")
-        self.configure(fg_color=DARK_BLUE)
-        
-        # State variables
-        self.is_fullscreen = False
-        self.current_view = None
-        self.facts_viewed = 0  # Add this line
-        self.favorite_facts = set()  # Store unique facts
-        
-        # Configure grid
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=1)
-        
-        # Create frames
-        self.create_sidebar()
-        self.create_main_content()
-        self.create_right_panel()
-        
-        # Load settings
-        self.load_settings()
-        
-        # Show home by default
-        self.show_home()
-        
-        # Bind keyboard shortcuts
-        self.bind("<F11>", lambda event: self.toggle_fullscreen())
-        self.bind("<Escape>", lambda event: self.exit_fullscreen())
+        self.title("Multifunctional Hub")
+        self.geometry("900x650") # Adjusted size
+        self.configure(bg=COLOR_PRIMARY_BG)
+        self.current_app_frame = None
+        self.app_frames = {}
 
-        self.db = DatabaseHandler()
-        self.api = FactAPI()
-
-    def create_sidebar(self):
-        self.sidebar = ctk.CTkFrame(self, fg_color=DARK_BG, width=250, corner_radius=0)
-        self.sidebar.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
-        self.sidebar.grid_propagate(False)
-        
-        # App logo/title with new styling
-        self.logo_label = ctk.CTkLabel(
-            self.sidebar, 
-            text="FACT FINDER",
-            font=("Roboto", 24, "bold"),
-            text_color=TEXT_WHITE
-        )
-        self.logo_label.pack(pady=30, padx=20)
-        
-        buttons = [
-            ("🏠  Home", self.show_home),
-            ("🎲  Facts", self.show_facts),
-            ("📊  Statistics", self.show_stats),
-            ("⚙️  Settings", self.show_settings)
-        ]
-        
-        # Create a modified button style for sidebar buttons
-        sidebar_button_style = button_style.copy()
-        sidebar_button_style.update({
-            "fg_color": "transparent",
-            "text_color": TEXT_WHITE,
-            "anchor": "w",
-            "hover_color": CARD_BG
-        })
-        
-        for text, command in buttons:
-            btn = ctk.CTkButton(
-                self.sidebar,
-                text=text,
-                command=command,
-                **sidebar_button_style
-            )
-            btn.pack(pady=5, padx=20, fill="x")
-
-    def create_main_content(self):
-        # Main content area
-        self.main_frame = ctk.CTkFrame(self, fg_color=DARK_BLUE, corner_radius=0)
-        self.main_frame.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
-        
-        # Fact display area
-        self.fact_frame = ctk.CTkFrame(
-            self.main_frame,
-            fg_color=ACCENT_BLUE,
-            corner_radius=10
-        )
-        self.fact_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        # Fact text
-        self.fact_label = ctk.CTkLabel(
-            self.fact_frame,
-            text="Select a country to get interesting facts!",
-            font=("Roboto", 16),
-            text_color=WHITE,
-            wraplength=500
-        )
-        self.fact_label.pack(pady=20, padx=20)
-
-    def create_right_panel(self):
-        # Right panel for additional controls
-        self.right_panel = ctk.CTkFrame(self, fg_color=ACCENT_BLUE, width=250, corner_radius=0)
-        self.right_panel.grid(row=0, column=2, sticky="nsew", padx=0, pady=0)
-        self.right_panel.grid_propagate(False)
-        
-        # Country selection
-        self.country_label = ctk.CTkLabel(
-            self.right_panel,
-            text="Select Country:",
-            font=("Roboto", 14, "bold"),
-            text_color=WHITE
-        )
-        self.country_label.pack(pady=(20,5), padx=10)
-        
-        self.country_var = ctk.StringVar(value="Select a country")
-        self.country_dropdown = ctk.CTkOptionMenu(
-            self.right_panel,
-            values=["USA", "UK", "Canada", "Australia", "Germany"],
-            variable=self.country_var,
-            command=self.on_country_select
-        )
-        self.country_dropdown.pack(pady=5, padx=10)
-        
-        # Fact type selection
-        self.type_label = ctk.CTkLabel(
-            self.right_panel,
-            text="Fact Type:",
-            font=("Roboto", 14, "bold"),
-            text_color=WHITE
-        )
-        self.type_label.pack(pady=(20,5), padx=10)
-        
-        self.fact_types = ["History", "Mathematics", "Science", "Culture"]
-        for fact_type in self.fact_types:
-            cb = ctk.CTkCheckBox(
-                self.right_panel,
-                text=fact_type,
-                text_color=WHITE,
-                fg_color=LIGHT_BLUE
-            )
-            cb.pack(pady=5, padx=10)
-
-        # Add a search box
-        self.search_frame = ctk.CTkFrame(self.right_panel, fg_color="transparent")
-        self.search_frame.pack(pady=10, padx=10, fill="x")
-        
-        self.search_entry = ctk.CTkEntry(
-            self.search_frame,
-            placeholder_text="🔍 Search facts...",
-            height=35,
-            font=("Roboto", 12)
-        )
-        self.search_entry.pack(fill="x", pady=5)
-        
-        # Add favorite facts section
-        self.favorites_label = ctk.CTkLabel(
-            self.right_panel,
-            text="⭐ Favorite Facts",
-            font=("Roboto", 14, "bold"),
-            text_color=WHITE
-        )
-        self.favorites_label.pack(pady=(20,5), padx=10)
-        
-        self.favorites_frame = ctk.CTkFrame(self.right_panel, fg_color=DARK_BLUE)
-        self.favorites_frame.pack(pady=5, padx=10, fill="both", expand=True)
-        
-        # Add fact counter
-        self.counter_frame = ctk.CTkFrame(self.right_panel, fg_color=GRADIENT_START)
-        self.counter_frame.pack(pady=10, padx=10, fill="x", side="bottom")
-        
-        self.fact_counter = ctk.CTkLabel(
-            self.counter_frame,
-            text="Facts viewed: 0",
-            font=("Roboto", 12),
-            text_color=WHITE
-        )
-        self.fact_counter.pack(pady=5)
-
-    def load_settings(self):
-        # Load user settings from JSON file
-        settings_file = Path("settings.json")
-        if (settings_file.exists()):
-            with open(settings_file, "r") as f:
-                self.settings = json.load(f)
-        else:
-            self.settings = {
-                "theme": "dark",
-                "language": "en",
-                "last_country": None
-            }
-    
-    def show_home(self):
-        self.clear_main_frame()
-        self.current_view = "home"
-        
-        welcome_label = ctk.CTkLabel(
-            self.fact_frame,
-            text="Welcome to Fact Finder!",
-            font=("Roboto", 24, "bold"),
-            text_color=WHITE
-        )
-        welcome_label.pack(pady=(50, 20))
-        
-        info_text = "Select a country from the right panel to discover interesting facts.\n\n" \
-                   "You can filter facts by category using the checkboxes."
-        
-        info_label = ctk.CTkLabel(
-            self.fact_frame,
-            text=info_text,
-            font=("Roboto", 16),
-            text_color=WHITE,
-            wraplength=500
-        )
-        info_label.pack(pady=20)
-
-    def show_facts(self):
-        self.clear_main_frame()
-        self.current_view = "facts"
-        
-        # Create a gradient-style header
-        header_frame = ctk.CTkFrame(self.fact_frame, fg_color="transparent")
-        header_frame.pack(fill="x", padx=20, pady=(20, 30))
-        
-        header_label = ctk.CTkLabel(
-            header_frame,
-            text="✨ Discover Amazing Facts",
-            font=("Roboto", 28, "bold"),
-            text_color=WHITE
-        )
-        header_label.pack(side="left")
-        
-        # Create a container for the fact categories
-        categories_frame = ctk.CTkFrame(self.fact_frame, fg_color="transparent")
-        categories_frame.pack(fill="both", expand=True, padx=20, pady=10)
-        
-        # Define fact categories with icons and descriptions
-        categories = {
-            "🌍 Countries": "Get facts about specific countries",
-            "🏺 History": "Historical events and moments",
-            "🔢 Mathematics": "Numbers and mathematical concepts",
-            "🧬 Science": "Scientific discoveries and phenomena",
-            "🎲 Random": "Random interesting facts"
-        }
-        
-        # Create frame style for categories without duplicating properties
-        category_frame_style = {
-            "fg_color": CARD_BG,
-            "border_width": card_style["border_width"],
-            "border_color": card_style["border_color"],
-            "corner_radius": 10
-        }
-        
-        for category, description in categories.items():
-            # Create category frame with the correct style
-            category_frame = ctk.CTkFrame(
-                categories_frame,
-                **category_frame_style
-            )
-            category_frame.pack(fill="x", pady=10, padx=20)
-            
-            # Create left side container for icon and category
-            left_container = ctk.CTkFrame(category_frame, fg_color="transparent")
-            left_container.pack(side="left", padx=20, pady=15, fill="x", expand=True)
-            
-            category_label = ctk.CTkLabel(
-                left_container,
-                text=category,
-                font=("Roboto", 20, "bold"),
-                text_color=TEXT_WHITE
-            )
-            category_label.pack(side="left")
-            
-            description_label = ctk.CTkLabel(
-                left_container,
-                text=description,
-                font=("Roboto", 14),
-                text_color=TEXT_GRAY,
-                wraplength=400
-            )
-            description_label.pack(side="left", padx=(20, 0))
-            
-            # Create generate button
-            generate_btn = ctk.CTkButton(
-                category_frame,
-                text="Generate",
-                command=lambda cat=category.split()[1]: self.generate_fact(cat),
-                width=120,
-                **button_style
-            )
-            generate_btn.pack(side="right", padx=20)
-
-    def show_stats(self):
-        self.clear_main_frame()
-        self.current_view = "stats"
-        
-        stats_label = ctk.CTkLabel(
-            self.fact_frame,
-            text="Statistics",
-            font=("Roboto", 24, "bold"),
-            text_color=WHITE
-        )
-        stats_label.pack(pady=(50, 20))
-        
-        stats_text = "Here you can see your statistics.\n\n" \
-                     "Facts viewed: {}\n\n" \
-                     "Favorite facts: {}".format(self.facts_viewed, len(self.favorite_facts))
-        
-        stats_info_label = ctk.CTkLabel(
-            self.fact_frame,
-            text=stats_text,
-            font=("Roboto", 16),
-            text_color=WHITE,
-            wraplength=500
-        )
-        stats_info_label.pack(pady=20)
-
-    def show_settings(self):
-        self.clear_main_frame()
-        self.current_view = "settings"
-        
-        settings_label = ctk.CTkLabel(
-            self.fact_frame,
-            text="Settings",
-            font=("Roboto", 24, "bold"),
-            text_color=WHITE
-        )
-        settings_label.pack(pady=(50, 20))
-        
-        theme_label = ctk.CTkLabel(
-            self.fact_frame,
-            text="Theme:",
-            font=("Roboto", 16),
-            text_color=WHITE
-        )
-        theme_label.pack(pady=(20, 5))
-        
-        self.theme_var = ctk.StringVar(value=self.settings.get("theme", "dark"))
-        theme_options = ["dark", "light"]
-        self.theme_dropdown = ctk.CTkOptionMenu(
-            self.fact_frame,
-            values=theme_options,
-            variable=self.theme_var,
-            command=self.on_theme_change
-        )
-        self.theme_dropdown.pack(pady=5)
-        
-        language_label = ctk.CTkLabel(
-            self.fact_frame,
-            text="Language:",
-            font=("Roboto", 16),
-            text_color=WHITE
-        )
-        language_label.pack(pady=(20, 5))
-        
-        self.language_var = ctk.StringVar(value=self.settings.get("language", "en"))
-        language_options = ["en", "es", "fr", "de"]
-        self.language_dropdown = ctk.CTkOptionMenu(
-            self.fact_frame,
-            values=language_options,
-            variable=self.language_var,
-            command=self.on_language_change
-        )
-        self.language_dropdown.pack(pady=5)
-
-    def clear_main_frame(self):
-        for widget in self.fact_frame.winfo_children():
-            widget.destroy()
-
-    def on_country_select(self, country):
-        self.clear_main_frame()
-        self.current_view = "facts"
-        
-        loading_frame = ctk.CTkFrame(self.fact_frame, fg_color="transparent")
-        loading_frame.pack(fill="both", expand=True, padx=20, pady=20)
-        
-        loading_label = ctk.CTkLabel(
-            loading_frame,
-            text="Loading facts...",
-            font=("Roboto", 16),
-            text_color=WHITE
-        )
-        loading_label.pack(pady=20)
-        
-        self.after(1000, lambda: self._display_generated_fact("country", loading_frame, country))
-
-    def _display_generated_fact(self, category, loading_frame, country=None):
-        loading_frame.destroy()
-        
+        # --- Font check and definition moved here ---
+        global FONT_NORMAL, FONT_BOLD, FONT_LARGE, FONT_BUTTON, FONT_ICON, current_font_family
+        current_font_family = FONT_FAMILY_PRIMARY # Start with primary
         try:
-            # Get fact based on category
-            if category.lower() == "random":
-                categories = ["History", "Mathematics", "Science"]
-                category = random.choice(categories)
-            
-            if category.lower() in ["history", "countries"]:
-                fact_data = self.api.get_history_fact(country)
-            elif category.lower() == "mathematics":
-                fact_data = self.api.get_math_fact()
-            elif category.lower() == "science":
-                fact_data = self.api.get_trivia_fact("Science")
-            else:
-                fact_data = self.api.get_trivia_fact("Science")  # Default to science
-            
-            # Update fact counter
-            self.facts_viewed += 1
-            self.fact_counter.configure(text=f"Facts viewed: {self.facts_viewed}")
-            
-            # Create modern card design
-            fact_card = ctk.CTkFrame(self.fact_frame, **card_style)
-            fact_card.pack(expand=True, fill="both", padx=40, pady=40)
-            
-            # Category badge
-            badge_style = button_style.copy()
-            badge_style["height"] = 32
-            category_badge = ctk.CTkButton(
-                fact_card,
-                text=category.title(),
-                width=100,
-                **badge_style
-            )
-            category_badge.pack(pady=(20, 10), padx=20)
-            
-            # Fact text
-            fact_label = ctk.CTkLabel(
-                fact_card,
-                text=fact_data["fact"],
-                font=("Roboto", 16),
-                text_color=WHITE,
-                wraplength=600
-            )
-            fact_label.pack(pady=20, padx=40)
-            
-            # Action buttons frame
-            action_frame = ctk.CTkFrame(fact_card, fg_color="transparent")
-            action_frame.pack(fill="x", padx=20, pady=(0, 20))
-            
-            # Left side - source
-            source_label = ctk.CTkLabel(
-                action_frame,
-                text=f"📚 Source: {fact_data['source']}",
-                font=("Roboto", 12),
-                text_color=TEXT_GRAY
-            )
-            source_label.pack(side="left", padx=20)
-            
-            # Right side - buttons
-            buttons_frame = ctk.CTkFrame(action_frame, fg_color="transparent")
-            buttons_frame.pack(side="right", padx=20)
-            
-            # Favorite button
-            favorite_btn = ctk.CTkButton(
-                buttons_frame,
-                text="⭐ Add to Favorites",
-                command=lambda: self.add_to_favorites(fact_data),
-                **button_style
-            )
-            favorite_btn.pack(side="left", padx=5)
-            
-            # Generate another button
-            generate_btn = ctk.CTkButton(
-                buttons_frame,
-                text="🔄 Generate Another",
-                command=lambda: self.generate_fact(category),
-                **button_style
-            )
-            generate_btn.pack(side="left", padx=5)
-            
-        except Exception as e:
-            error_frame = ctk.CTkFrame(self.fact_frame, fg_color=CARD_BG)
-            error_frame.pack(expand=True, fill="both", padx=40, pady=40)
-            
-            error_label = ctk.CTkLabel(
-                error_frame,
-                text="⚠️ Unable to generate fact",
-                font=("Roboto", 20, "bold"),
-                text_color=HIGHLIGHT_COLOR
-            )
-            error_label.pack(pady=(40, 10))
-            
-            retry_btn = ctk.CTkButton(
-                error_frame,
-                text="🔄 Try Again",
-                command=lambda: self.generate_fact(category),
-                **button_style
-            )
-            retry_btn.pack(pady=(10, 40))
+            tk.font.nametofont(current_font_family)
+        except tk.TclError:
+            current_font_family = FONT_FAMILY_FALLBACK
+            print(f"Warning: Primary font '{FONT_FAMILY_PRIMARY}' not found. Using fallback '{FONT_FAMILY_FALLBACK}'.")
 
-    def add_to_favorites(self, fact_data):
-        fact_text = fact_data["fact"]  # Extract the fact text from the dictionary
-        if fact_text not in self.favorite_facts:
-            self.favorite_facts.add(fact_text)
-            
-            favorite_frame = ctk.CTkFrame(self.favorites_frame, fg_color=CARD_BG)
-            favorite_frame.pack(pady=5, padx=5, fill="x")
-            
-            fav_text = ctk.CTkLabel(
-                favorite_frame,
-                text=fact_text[:50] + "...",  # Show truncated version
-                font=("Roboto", 10),
-                text_color=TEXT_WHITE,
-                wraplength=200
-            )
-            fav_text.pack(pady=5, padx=5, side="left", fill="x", expand=True)
-            
-            remove_btn = ctk.CTkButton(
-                favorite_frame,
-                text="❌",
-                width=20,
-                fg_color="transparent",
-                hover_color=HIGHLIGHT_COLOR,
-                command=lambda: self.remove_favorite(favorite_frame, fact_text)
-            )
-            remove_btn.pack(side="right", padx=5)
+        FONT_NORMAL = (current_font_family, 10)
+        FONT_BOLD = (current_font_family, 10, "bold")
+        FONT_LARGE = (current_font_family, 14, "bold")
+        FONT_BUTTON = (current_font_family, 10, "bold")
+        FONT_ICON = (current_font_family, 12)
+        # --- End of font check and definition ---
 
-    def remove_favorite(self, frame, fact_text):
-        self.favorite_facts.remove(fact_text)
-        frame.destroy()
 
-    def toggle_fullscreen(self):
-        self.is_fullscreen = not self.is_fullscreen
-        self.attributes("-fullscreen", self.is_fullscreen)
+        self.setup_styles()
+        self.create_main_layout()
 
-    def exit_fullscreen(self):
-        self.is_fullscreen = False
-        self.attributes("-fullscreen", False)
+        # Order matters for sidebar
+        # ENSURE the classes listed here are defined BEFORE the MultifunctionalApp class
+        self.apps_config = [
+            {"class": UnitConverterApp, "name": "Units", "icon": "📏"},
+            {"class": ToDoListApp, "name": "To-Do", "icon": "✅"},
+            {"class": FunFactApp, "name": "Facts", "icon": "💡"},
+            {"class": CalculatorApp, "name": "Calc", "icon": "🧮"},
+            {"class": WeatherApp, "name": "Weather", "icon": "🌦️"},
+            {"class": QuizGameApp, "name": "Quiz", "icon": "❓"},
+            {"class": StockMarketApp, "name": "Stocks", "icon": "📈"}, # Added Stock Market App
+            {"class": CharacterCustomizerApp, "name": "Avatar", "icon": "🎨"},
+            {"class": ImageViewerApp, "name": "Images", "icon": "🖼️"},
+            {"class": TranslatorApp, "name": "Translate", "icon": "🌐"},
+        ]
+        self.create_apps_and_sidebar_buttons()
 
-    def on_theme_change(self, theme):
-        self.settings["theme"] = theme
-        self.save_settings()
+        # Show the first app by default
+        if self.apps_config:
+            self.show_app(self.apps_config[0]["name"])
 
-    def on_language_change(self, language):
-        self.settings["language"] = language
-        self.save_settings()
+        # Bind global keyboard shortcuts
+        self.bind("<Control-Shift-A>", lambda event: self.show_about_dialog()) # Example: Ctrl+Shift+A for About
 
-    def save_settings(self):
-        with open("settings.json", "w") as f:
-            json.dump(self.settings, f, indent=4)
 
-    # Add this method to the FactFinderApp class
-    def generate_fact(self, category):
-        self.clear_main_frame()
-        
-        # Show loading animation
-        loading_frame = ctk.CTkFrame(self.fact_frame, fg_color="transparent")
-        loading_frame.pack(expand=True, fill="both")
-        
-        loading_label = ctk.CTkLabel(
-            loading_frame,
-            text="🔄 Generating fact...",
-            font=("Roboto", 16),
-            text_color=WHITE
-        )
-        loading_label.pack(expand=True)
-        
-        # Use after to simulate loading and get fact
-        self.after(800, lambda: self._display_generated_fact(category, loading_frame))
-        
-        # Update fact counter
-        self.facts_viewed += 1
-        self.fact_counter.configure(text=f"Facts viewed: {self.facts_viewed}")
+    def setup_styles(self):
+        style = ttk.Style(self)
+        style.theme_use('clam') # 'clam' or 'alt' are good for customization
+
+        # --- General Widget Styling ---
+        style.configure(".", background=COLOR_PRIMARY_BG, foreground=COLOR_TEXT_PRIMARY, font=FONT_NORMAL,
+                         borderwidth=0, focuscolor=COLOR_ACCENT)
+
+        style.configure("TFrame", background=COLOR_PRIMARY_BG)
+        style.configure("App.TFrame", background=COLOR_PRIMARY_BG)
+        style.configure("Sidebar.TFrame", background=COLOR_SECONDARY_BG)
+
+        style.configure("TLabel", foreground=COLOR_TEXT_PRIMARY, background=COLOR_PRIMARY_BG, padding=5)
+        style.configure("Header.TLabel", font=FONT_LARGE, foreground=COLOR_ACCENT) # Accent color for headers
+        style.configure("SecondaryText.TLabel", foreground=COLOR_TEXT_SECONDARY, background=COLOR_PRIMARY_BG)
+        style.configure("Result.TLabel", font=FONT_BOLD, foreground=COLOR_SUCCESS, background=COLOR_PRIMARY_BG) # Use success color for results
+        style.configure("Fact.TLabel", font=(current_font_family, 16), foreground=COLOR_TEXT_PRIMARY, background=COLOR_PRIMARY_BG, padding=10)
+        style.configure("Red.TLabel", foreground=COLOR_ERROR, background=COLOR_PRIMARY_BG) # For error messages
+
+
+        style.configure("TEntry",
+                        fieldbackground=COLOR_WIDGET_BG, foreground=COLOR_TEXT_PRIMARY,
+                        insertcolor=COLOR_ACCENT, # Neon-like cursor
+                        borderwidth=1, highlightthickness=2, # Thicker highlight for neon effect
+                        relief="flat")
+        style.map("TEntry",
+                  fieldbackground=[('readonly', COLOR_SECONDARY_BG)], # Readonly entries have different background
+                  foreground=[('readonly', COLOR_TEXT_SECONDARY)],
+                  insertcolor=[('readonly', COLOR_DISABLED_FG)],
+                  bordercolor=[('focus', COLOR_ACCENT), ('!focus', COLOR_BORDER)],
+                  highlightcolor=[('focus', COLOR_ACCENT), ('!focus', COLOR_BORDER)]) # Highlight color is accent
+
+        style.configure("Display.TEntry", fieldbackground=COLOR_SECONDARY_BG, foreground=COLOR_SUCCESS, font=(current_font_family, 20, "bold"), borderwidth=0) # Calculator display style
+
+        style.configure("TButton", font=FONT_BUTTON, padding=(10, 8),
+                        background=COLOR_WIDGET_BG, foreground=COLOR_TEXT_PRIMARY,
+                        relief="flat", borderwidth=0) # Reduced borderwidth for flatter look
+        style.map("TButton",
+                  background=[('active', COLOR_ACCENT_HOVER), ('!disabled', COLOR_WIDGET_BG)],
+                  foreground=[('active', COLOR_TEXT_ON_ACCENT_BG), ('!disabled', COLOR_TEXT_PRIMARY)],
+                  # No bordercolor mapping for flatter look
+                  )
+
+        style.configure("App.TButton", background=COLOR_SECONDARY_BG, foreground=COLOR_TEXT_PRIMARY) # App-specific buttons
+        style.map("App.TButton", background=[('active', COLOR_BORDER)]) # Subtle hover effect
+
+        style.configure("Accent.TButton", background=COLOR_ACCENT, foreground=COLOR_TEXT_ACCENT_FG)
+        style.map("Accent.TButton", background=[('active', COLOR_ACCENT_HOVER), ('pressed', COLOR_ACCENT_HOVER)])
+
+        style.configure("Red.TButton", background=COLOR_ERROR, foreground=COLOR_TEXT_ACCENT_FG)
+        style.map("Red.TButton", background=[('active', "#D32F2F"), ('pressed', "#D32F2F")]) # Darker red on hover/press
+
+        style.configure("Calc.TButton", font=(current_font_family, 12, 'bold'), padding=(15,15), background=COLOR_WIDGET_BG, foreground=COLOR_TEXT_PRIMARY)
+        style.map("Calc.TButton", background=[('active', COLOR_BORDER)])
+        style.configure("Operator.TButton", background=COLOR_SECONDARY_BG, foreground=COLOR_ACCENT) # Operator buttons use accent
+        style.map("Operator.TButton", background=[('active', COLOR_BORDER)])
+
+        style.configure("Sidebar.TButton", font=FONT_BUTTON, padding=(15, 10), width=15,
+                        background=COLOR_SECONDARY_BG, foreground=COLOR_TEXT_SECONDARY,
+                        relief="flat", borderwidth=0, anchor="w")
+        style.map("Sidebar.TButton",
+                  background=[('active', COLOR_ACCENT), ('selected', COLOR_ACCENT), ('!disabled', COLOR_SECONDARY_BG)],
+                  foreground=[('active', COLOR_TEXT_ACCENT_FG),('selected', COLOR_TEXT_ACCENT_FG), ('!disabled', COLOR_TEXT_SECONDARY)])
+
+        style.configure("App.Vertical.TScrollbar",
+                        background=COLOR_SECONDARY_BG, troughcolor=COLOR_PRIMARY_BG, bordercolor=COLOR_SECONDARY_BG, # Adjusted colors
+                        arrowcolor=COLOR_TEXT_SECONDARY)
+        style.map("App.Vertical.TScrollbar",
+                  background=[('active', COLOR_BORDER)],
+                  arrowcolor=[('pressed', COLOR_ACCENT), ('active', COLOR_ACCENT)])
+
+        style.configure("App.TRadiobutton", background=COLOR_PRIMARY_BG, foreground=COLOR_TEXT_PRIMARY, indicatorrelief="flat") # Flat indicator
+        style.map("App.TRadiobutton", background=[('active', COLOR_BORDER)], foreground=[('disabled', COLOR_DISABLED_FG)], indicatorcolor=[('selected', COLOR_ACCENT)]) # Neon indicator when selected
+
+        style.configure("App.TLabelframe", background=COLOR_PRIMARY_BG, foreground=COLOR_TEXT_SECONDARY, font=FONT_BOLD, relief="solid", borderwidth=1, highlightthickness=0) # Solid border, no highlight
+        style.configure("App.TLabelframe.Label", background=COLOR_PRIMARY_BG, foreground=COLOR_TEXT_SECONDARY, font=FONT_BOLD) # Label color matches secondary text
+
+        style.configure("App.TCombobox", fieldbackground=COLOR_WIDGET_BG, foreground=COLOR_TEXT_PRIMARY, selectbackground=COLOR_ACCENT, selectforeground=COLOR_TEXT_ON_ACCENT_BG, borderwidth=1, relief="flat")
+        style.map("App.TCombobox",
+                  fieldbackground=[('readonly', COLOR_WIDGET_BG)],
+                  selectbackground=[('readonly', COLOR_ACCENT)],
+                  selectforeground=[('readonly', COLOR_TEXT_ON_ACCENT_BG)],
+                  bordercolor=[('focus', COLOR_ACCENT), ('!focus', COLOR_BORDER)],
+                  highlightcolor=[('focus', COLOR_ACCENT), ('!focus', COLOR_BORDER)])
+
+        style.configure("App.TSpinbox", fieldbackground=COLOR_WIDGET_BG, foreground=COLOR_TEXT_PRIMARY, insertcolor=COLOR_TEXT_PRIMARY, borderwidth=1, relief="flat")
+        style.map("App.TSpinbox",
+                  fieldbackground=[('readonly', COLOR_WIDGET_BG)],
+                  bordercolor=[('focus', COLOR_ACCENT), ('!focus', COLOR_BORDER)],
+                  highlightcolor=[('focus', COLOR_ACCENT), ('!focus', COLOR_BORDER)])
+
+        # Style for Listbox (standard Tkinter widget)
+        # Handled directly in ToDoListApp create_widgets for more control
+
+
+    def create_main_layout(self):
+        self.main_frame = ttk.Frame(self, style="App.TFrame")
+        self.main_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        self.sidebar_frame = ttk.Frame(self, width=200, style="Sidebar.TFrame")
+        self.sidebar_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0,0), pady=(0,0))
+        self.sidebar_frame.pack_propagate(False)
+
+        # App Title / Logo in Sidebar (uses the determined font family)
+        app_title_label = ttk.Label(self.sidebar_frame, text=" HUB", font=(current_font_family, 18, "bold"),
+                                    foreground=COLOR_ACCENT, background=COLOR_SECONDARY_BG,
+                                    compound=tk.LEFT)
+        app_title_label.pack(pady=20, padx=15, anchor="w")
+
+        # Separator
+        separator = ttk.Separator(self.sidebar_frame, orient='horizontal')
+        separator.pack(fill='x', padx=10, pady=10)
+
+    def create_apps_and_sidebar_buttons(self):
+        self.sidebar_buttons = {}
+        for app_config in self.apps_config:
+            AppClass = app_config["class"]
+            app_name = app_config["name"]
+            app_icon = app_config["icon"]
+
+            # Pass main_frame as the parent
+            frame = AppClass(self.main_frame)
+            self.app_frames[app_name] = frame
+            # Don't pack/grid frame here, show_app will handle it.
+
+            btn_text = f"{app_icon}  {app_name}"
+            btn = ttk.Button(self.sidebar_frame, text=btn_text, style="Sidebar.TButton",
+                             command=lambda name=app_name: self.show_app(name))
+            btn.pack(fill=tk.X, padx=10, pady=3)
+            self.sidebar_buttons[app_name] = btn
+
+        # About button at the bottom of sidebar
+        ttk.Separator(self.sidebar_frame, orient='horizontal').pack(fill='x', padx=10, pady=(20,5), side=tk.BOTTOM)
+        about_button = ttk.Button(self.sidebar_frame, text="ℹ️  About", style="Sidebar.TButton", command=self.show_about_dialog)
+        about_button.pack(fill=tk.X, padx=10, pady=5, side=tk.BOTTOM)
+
+
+    def show_app(self, app_name_to_show):
+        if self.current_app_frame:
+            self.current_app_frame.on_hide()
+            self.current_app_frame.pack_forget()
+
+        frame_to_show = self.app_frames.get(app_name_to_show)
+        if frame_to_show:
+            self.current_app_frame = frame_to_show
+            self.current_app_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+            self.current_app_frame.on_show()
+
+            for name, button in self.sidebar_buttons.items():
+                if name == app_name_to_show:
+                    button.state(['selected'])
+                else:
+                    button.state(['!selected'])
+        else:
+            print(f"Error: App frame for '{app_name_to_show}' not found.")
+
+
+    def show_about_dialog(self):
+        # Create a custom Toplevel window for the About dialog
+        about_window = tk.Toplevel(self)
+        about_window.title("About Multifunctional Hub")
+        about_window.geometry("400x300")
+        about_window.configure(bg=COLOR_PRIMARY_BG)
+        about_window.transient(self) # Keep dialog on top of the main window
+        about_window.grab_set() # Prevent interaction with the main window
+
+        about_frame = ttk.Frame(about_window, style="App.TFrame", padding=20)
+        about_frame.pack(expand=True, fill=tk.BOTH)
+
+        ttk.Label(about_frame, text="Multifunctional Hub v2.3 ✨", style="Header.TLabel").pack(pady=10) # Updated version
+        ttk.Label(about_frame, text="A collection of useful tools in one stylish application.", style="SecondaryText.TLabel", wraplength=350, justify="center").pack(pady=5)
+        ttk.Label(about_frame, text="Created with Python and Tkinter ttk.", style="SecondaryText.TLabel").pack(pady=5)
+        ttk.Label(about_frame, text="Inspired by modern UI design principles.", style="SecondaryText.TLabel").pack(pady=5)
+        ttk.Label(about_frame, text=f"Your Local IP: {get_local_ip()}", style="SecondaryText.TLabel").pack(pady=5)
+
+        close_button = ttk.Button(about_frame, text="Close", command=about_window.destroy, style="Accent.TButton")
+        close_button.pack(pady=20)
+
+        # Center the dialog
+        self.update_idletasks() # Ensure windows are measured
+        x = self.winfo_x() + (self.winfo_width() // 2) - (about_window.winfo_width() // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (about_window.winfo_height() // 2)
+        about_window.geometry(f"+{x}+{y}")
+
 
 if __name__ == "__main__":
-    app = FactFinderApp()
+    app = MultifunctionalApp()
     app.mainloop()
